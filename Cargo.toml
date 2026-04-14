@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/screen-cli",
+    "crates/screen-core",
+    "crates/screen-daemon",
+    "crates/screen-protocol",
+    "crates/screen-terminal",
+    "crates/screen-pty",
+    "crates/screen-config",
+    "crates/screen-platform",
+    "crates/screen-testkit",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.96"
+license = "GPL-3.0-or-later"
+repository = "https://example.invalid/screen-rs"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+todo = "deny"
+dbg_macro = "deny"

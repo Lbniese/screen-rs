@@ -1,0 +1,11 @@
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+allow = ["GPL-3.0-or-later"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
