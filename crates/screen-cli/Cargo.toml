@@ -1,0 +1,22 @@
+[package]
+name = "screen-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "screen-rs"
+path = "src/main.rs"
+
+[dependencies]
+screen-config = { path = "../screen-config", version = "0.0.1" }
+screen-daemon = { path = "../screen-daemon", version = "0.0.1" }
+screen-platform = { path = "../screen-platform", version = "0.0.1" }
+screen-protocol = { path = "../screen-protocol", version = "0.0.1" }
+
+[dev-dependencies]
+screen-testkit = { path = "../screen-testkit", version = "0.0.1" }
+
+[lints]
+workspace = true
