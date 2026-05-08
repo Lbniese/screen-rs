@@ -56,6 +56,10 @@ impl PtyProcess {
                 Ok(read) => output.extend_from_slice(&buffer[..read]),
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                // Linux returns EIO (5) when the PTY slave is closed (child exited).
+                // Treat it like EOF rather than a fatal error so the daemon can
+                // detect the child exit via try_wait and send ChildExited.
+                Err(error) if error.raw_os_error() == Some(5) => break,
                 Err(error) => return Err(PtyError::Read(error)),
             }
         }

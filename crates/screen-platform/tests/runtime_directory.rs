@@ -24,7 +24,7 @@ impl TempDir {
             .unwrap_or_default()
             .subsec_nanos();
         let short = if name.len() > 10 { &name[..10] } else { name };
-        let path = PathBuf::from("/private/tmp").join(format!("sp-{short}-{nanos}-{id}"));
+        let path = std::env::temp_dir().join(format!("sp-{short}-{nanos}-{id}"));
         fs::create_dir(&path).unwrap_or_else(|error| {
             panic!(
                 "failed to create temporary directory {}: {error}",

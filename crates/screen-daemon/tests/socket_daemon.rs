@@ -18,7 +18,8 @@ impl TempDir {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .subsec_nanos();
-        let path = PathBuf::from("/private/tmp").join(format!("sda-{name}-{nanos}"));
+        let base = std::env::temp_dir();
+        let path = base.join(format!("sda-{name}-{nanos}"));
         fs::create_dir(&path).unwrap_or_else(|error| {
             panic!(
                 "failed to create temporary directory {}: {error}",

@@ -93,6 +93,8 @@ fn attached_create_compares_with_gnu_screen() {
         eprintln!("attached_create differential report");
         eprintln!("reference flags: {:?}", reference_result.flags());
         eprintln!("candidate flags: {:?}", candidate_result.flags());
+        eprintln!("candidate exit_code: {:?}", candidate_result.exit_code);
+        eprintln!("candidate exit_signal: {:?}", candidate_result.exit_signal);
         eprintln!("reference diagnostics: {:?}", reference_result.diagnostics);
         eprintln!("candidate diagnostics: {:?}", candidate_result.diagnostics);
     }
@@ -935,6 +937,8 @@ struct RemoteStuffResult {
 struct AttachedCreateCaseResult {
     output_has_ready: bool,
     status_success: bool,
+    exit_code: Option<i32>,
+    exit_signal: Option<i32>,
     cleanup_success: bool,
     diagnostics: Vec<String>,
 }
@@ -944,6 +948,8 @@ impl AttachedCreateCaseResult {
         Self {
             output_has_ready: false,
             status_success: false,
+            exit_code: None,
+            exit_signal: None,
             cleanup_success: false,
             diagnostics: Vec::new(),
         }
@@ -1014,7 +1020,15 @@ fn run_attached_create_case(
     }
 
     match process.wait_or_kill(Duration::from_secs(5)) {
-        Ok(status) => result.status_success = status.success(),
+        Ok(status) => {
+            result.status_success = status.success();
+            result.exit_code = status.code();
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                result.exit_signal = status.signal();
+            }
+        }
         Err(error) => result
             .diagnostics
             .push(format!("attached create did not exit cleanly: {error}")),
@@ -2244,9 +2258,13 @@ fn format_output(label: &str, output: &CommandOutput) -> String {
 }
 
 fn normalize_list_output(output: &CommandOutput, runtime: &Path, session_name: &str) -> String {
+    // Different GNU Screen versions return 0 or 1 for -ls/-wipe on success.
+    // Normalize: treat both 0 and 1 as success.
+    let code = output.status.code().unwrap_or(-1);
+    let normalized_status = if code == 0 || code == 1 { 0 } else { code };
     format!(
         "status={}\nstdout={}\nstderr={}",
-        output.status.code().unwrap_or(-1),
+        normalized_status,
         normalize_list_stream(&output.stdout, runtime, session_name),
         normalize_list_stream(&output.stderr, runtime, session_name)
     )
@@ -2261,9 +2279,10 @@ fn normalize_runtime_path(bytes: &[u8], runtime: &Path) -> Vec<u8> {
 fn normalize_list_stream(bytes: &[u8], runtime: &Path, session_name: &str) -> String {
     let runtime = runtime.display().to_string();
     String::from_utf8_lossy(bytes)
-        .replace("\r\n", "\n")
+        .replace('\r', "")
         .replace(&runtime, "<runtime>")
         .lines()
+        .filter(|line| !line.is_empty())
         .map(|line| normalize_list_line(line, session_name))
         .collect::<Vec<_>>()
         .join("\n")
@@ -2285,7 +2304,68 @@ fn normalize_list_line(line: &str, session_name: &str) -> String {
         return line.to_owned();
     }
 
-    format!("{}<pid>{}", &line[..digits_start], &line[marker_index..])
+    let mut result = format!("{}<pid>{}", &line[..digits_start], &line[marker_index..]);
+    // Normalize the date/timestamp: replace it with <date> if present,
+    // or insert <date> before the state field if absent.
+    result = normalize_date_or_insert(&result);
+    result
+}
+
+/// Replace a GNU Screen date pattern (MM/DD/YY HH:MM:SS) with `<date>`,
+/// or insert `<date>` before the state field like `(Detached)` if no date exists.
+fn normalize_date_or_insert(line: &str) -> String {
+    let bytes = line.as_bytes();
+    // 1) Try to replace an existing date pattern
+    let mut result = String::with_capacity(line.len());
+    let mut i = 0;
+    let mut replaced = false;
+    while i < bytes.len() {
+        if bytes[i] == b'('
+            && i + 18 < bytes.len()
+            && bytes[i + 3] == b'/'
+            && bytes[i + 6] == b'/'
+            && bytes[i + 9] == b' '
+            && bytes[i + 12] == b':'
+            && bytes[i + 15] == b':'
+            && bytes[i + 18] == b')'
+        {
+            let is_date = [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17]
+                .iter()
+                .all(|&off| bytes[i + off].is_ascii_digit());
+            if is_date {
+                result.push_str("<date>");
+                i += 19;
+                replaced = true;
+                continue;
+            }
+        }
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    if replaced {
+        return result;
+    }
+    // 2) No date — insert <date> before the state field
+    // State fields look like: (Detached), (Attached), or (Dead ...)
+    for state in &["(Detached)", "(Attached)"] {
+        if let Some(pos) = result.find(state) {
+            // Insert <date> followed by a tab before the state
+            let mut inserted = String::with_capacity(result.len() + 10);
+            inserted.push_str(&result[..pos]);
+            inserted.push_str("<date>\t");
+            inserted.push_str(&result[pos..]);
+            return inserted;
+        }
+    }
+    // Check for (Dead ...)
+    if let Some(pos) = result.find("(Dead") {
+        let mut inserted = String::with_capacity(result.len() + 10);
+        inserted.push_str(&result[..pos]);
+        inserted.push_str("<date>\t");
+        inserted.push_str(&result[pos..]);
+        return inserted;
+    }
+    result
 }
 
 fn unix_socket_bind_allowed(runtime: &Path) -> bool {

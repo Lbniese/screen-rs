@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use screen_cli::{
     AttachOptions, AttachOrCreateOptions, CreateDetachedOptions, CreateOptions, Invocation,
@@ -68,14 +68,14 @@ fn main() -> ExitCode {
         },
         Ok(Invocation::RemoteCommand(options)) => report_result(remote_command(options)),
         Ok(Invocation::List(options)) => match list_sessions(options) {
-            Ok(()) => ExitCode::from(1),
+            Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("screen-rs: {error}");
                 ExitCode::from(1)
             }
         },
         Ok(Invocation::Wipe(options)) => match wipe_sessions(options) {
-            Ok(()) => ExitCode::from(1),
+            Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("screen-rs: {error}");
                 ExitCode::from(1)
@@ -892,7 +892,16 @@ fn print_session_listing(runtime: &std::path::Path, entries: &[SessionSocketEntr
             SocketPathStatus::StaleSocket => "Dead",
             _ => continue,
         };
-        println!("\t{}\t({state})", entry.name.to_string_lossy());
+        let date = entry
+            .created_at
+            .as_ref()
+            .map(|t| format_socket_date(*t))
+            .unwrap_or_default();
+        if date.is_empty() {
+            println!("\t{}\t({state})", entry.name.to_string_lossy());
+        } else {
+            println!("\t{}\t({date})\t({state})", entry.name.to_string_lossy());
+        }
     }
     let noun = if entries.len() == 1 {
         "Socket"
@@ -900,7 +909,6 @@ fn print_session_listing(runtime: &std::path::Path, entries: &[SessionSocketEntr
         "Sockets"
     };
     println!("{} {noun} in {}.", entries.len(), runtime.display());
-    println!();
 }
 
 fn wipe_sessions(options: WipeOptions) -> Result<(), String> {
@@ -1008,6 +1016,7 @@ fn find_active_session_socket(
 struct SessionSocketEntry {
     name: OsString,
     status: SocketPathStatus,
+    created_at: Option<SystemTime>,
 }
 
 fn session_socket_entries(runtime: &RuntimeDirectory) -> Result<Vec<SessionSocketEntry>, String> {
@@ -1022,7 +1031,12 @@ fn session_socket_entries(runtime: &RuntimeDirectory) -> Result<Vec<SessionSocke
             status,
             SocketPathStatus::ActiveSocket | SocketPathStatus::StaleSocket
         ) {
-            entries.push(SessionSocketEntry { name, status });
+            let created_at = entry.metadata().ok().and_then(|md| md.modified().ok());
+            entries.push(SessionSocketEntry {
+                name,
+                status,
+                created_at,
+            });
         }
     }
     entries.sort_by(|left, right| {
@@ -1054,6 +1068,41 @@ fn session_name_matches(socket_name: &OsStr, requested: &OsStr) -> bool {
     !socket[..dot].is_empty()
         && socket[..dot].iter().all(|byte| byte.is_ascii_digit())
         && &socket[dot + 1..] == requested
+}
+
+fn format_socket_date(time: SystemTime) -> String {
+    let secs = match time.duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs(),
+        Err(_) => return String::new(),
+    };
+    // Convert Unix timestamp to YYYY-MM-DD HH:MM:SS UTC, then format as MM/DD/YY HH:MM:SS
+    let secs_per_day = 86400_u64;
+    let days = secs / secs_per_day;
+    let day_secs = secs % secs_per_day;
+
+    let hours = day_secs / 3600;
+    let minutes = (day_secs % 3600) / 60;
+    let seconds = day_secs % 60;
+
+    // Days since Unix epoch conversion (civil_from_days) for UTC
+    let (year, month, day) = civil_from_days(days as i64);
+    let short_year = year % 100;
+    format!("{month:02}/{day:02}/{short_year:02} {hours:02}:{minutes:02}:{seconds:02}")
+}
+
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    // Algorithm from Howard Hinnant / "chrono-compatible days-to-civil"
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
 }
 
 fn open_or_create_runtime() -> Result<RuntimeDirectory, String> {
