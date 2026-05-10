@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use screen_protocol::{Message, ProtocolError, WindowInfoMsg};
 use screen_pty::{PtyCommand, PtyError, PtyProcess, PtySize};
+use screen_terminal::{Dimensions, TerminalState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonState {
@@ -282,6 +283,9 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
             if let Some(pty) = &mut window.pty {
                 let output = pty.read_available()?;
                 if !output.is_empty() {
+                    // Feed output through the terminal engine for scrollback tracking
+                    window.terminal.apply(&output);
+
                     // Log output if logging is enabled
                     if let (Some(log_file), Some(log_path)) =
                         (&mut log_file, config.log_path.as_deref())
@@ -374,6 +378,7 @@ struct ManagedWindow {
     output_buffer: Vec<u8>,
     alive: bool,
     exit_code: Option<i32>,
+    terminal: TerminalState,
 }
 
 #[derive(Debug, Clone)]
@@ -423,6 +428,7 @@ impl SessionState {
         cmd.env("TERM", term);
 
         let pty = cmd.spawn()?;
+        let terminal = TerminalState::new(Dimensions::new(size.columns, size.rows));
 
         let window = ManagedWindow {
             id,
@@ -431,6 +437,7 @@ impl SessionState {
             output_buffer: Vec::new(),
             alive: true,
             exit_code: None,
+            terminal,
         };
 
         self.windows.push(window);
@@ -459,10 +466,13 @@ impl SessionState {
     }
 
     fn resize_window(&mut self, idx: usize, size: PtySize) -> Result<(), DaemonError> {
-        if let Some(window) = self.windows.get(idx)
-            && let Some(pty) = &window.pty
-        {
-            pty.resize(size)?;
+        if let Some(window) = self.windows.get_mut(idx) {
+            if let Some(pty) = &window.pty {
+                pty.resize(size)?;
+            }
+            window
+                .terminal
+                .resize(Dimensions::new(size.columns, size.rows));
         }
         Ok(())
     }
@@ -613,10 +623,24 @@ impl ManagedWindow {
         }
     }
 
-    /// Return scrollback lines derived from the output buffer.
+    /// Return scrollback lines derived from the terminal engine.
+    /// Combines scrollback buffer lines and visible grid lines.
     fn scrollback_lines(&self) -> Vec<Vec<u8>> {
-        let text = String::from_utf8_lossy(&self.output_buffer);
-        text.lines().map(|l| l.as_bytes().to_vec()).collect()
+        let mut lines: Vec<Vec<u8>> = Vec::new();
+        // Scrollback buffer (oldest first)
+        for i in 0..self.terminal.scrollback_len() {
+            let idx = self.terminal.scrollback_len() - 1 - i;
+            if let Some(line) = self.terminal.scrollback_line(idx) {
+                lines.push(line);
+            }
+        }
+        // Visible grid rows
+        for row in 0..self.terminal.dimensions.rows {
+            if let Some(line) = self.terminal.line_bytes(row) {
+                lines.push(line);
+            }
+        }
+        lines
     }
 }
 

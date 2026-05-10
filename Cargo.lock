@@ -28,6 +28,7 @@ dependencies = [
  "screen-core",
  "screen-protocol",
  "screen-pty",
+ "screen-terminal",
 ]
 
 [[package]]
