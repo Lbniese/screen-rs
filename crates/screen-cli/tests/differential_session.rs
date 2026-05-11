@@ -827,6 +827,269 @@ fn logging_option_compares_with_gnu_screen() {
     assert_eq!(candidate_log, reference_log);
 }
 
+#[test]
+fn multi_window_create_and_kill_compares_with_gnu_screen() {
+    let reference = std::env::var_os("SCREEN_REFERENCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("screen"));
+    let candidate = std::env::var_os("SCREEN_CANDIDATE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_screen-rs")));
+
+    let reference_runtime = TempDir::new("mw-ref");
+    let candidate_runtime = TempDir::new("mw-cand");
+    if !unix_socket_bind_allowed(candidate_runtime.path()) {
+        eprintln!("skipping multi-window differential test: Unix socket bind is not permitted");
+        return;
+    }
+
+    let reference_result = run_multi_window_case(
+        Implementation::Reference,
+        &reference,
+        reference_runtime.path(),
+        "mwcase",
+    );
+    let candidate_result = run_multi_window_case(
+        Implementation::Candidate,
+        &candidate,
+        candidate_runtime.path(),
+        "mwcase",
+    );
+
+    if !reference_result.completed
+        || !candidate_result.completed
+        || reference_result != candidate_result
+    {
+        eprintln!("multi-window differential report");
+        eprintln!("reference: {reference_result:?}");
+        eprintln!("candidate: {candidate_result:?}");
+    }
+
+    assert!(
+        reference_result.completed,
+        "reference multi-window case failed"
+    );
+    assert!(
+        candidate_result.completed,
+        "candidate multi-window case failed"
+    );
+    assert_eq!(candidate_result, reference_result);
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct MultiWindowResult {
+    completed: bool,
+    /// true if session was in listing after window0 killed (session survived)
+    session_survives_kill: bool,
+    /// true if session was in listing after creating window2 (still alive)
+    session_has_multiple: bool,
+    diagnostics: Vec<String>,
+}
+
+fn run_multi_window_case(
+    implementation: Implementation,
+    executable: &Path,
+    runtime: &Path,
+    session_name: &str,
+) -> MultiWindowResult {
+    let mut result = MultiWindowResult {
+        completed: false,
+        session_survives_kill: false,
+        session_has_multiple: false,
+        diagnostics: Vec::new(),
+    };
+
+    // 1. Start a detached session with a loop
+    match run_screen_null(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-d"),
+            OsStr::new("-m"),
+            OsStr::new("sh"),
+            OsStr::new("-c"),
+            OsStr::new("while :; do sleep 1; done"),
+        ],
+        Duration::from_secs(5),
+    ) {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            result
+                .diagnostics
+                .push(format!("start session: status {status}"));
+            return result;
+        }
+        Err(error) => {
+            result
+                .diagnostics
+                .push(format!("start session failed: {error}"));
+            return result;
+        }
+    }
+
+    // 2. Create a second window via -X screen
+    match run_screen(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-X"),
+            OsStr::new("screen"),
+            OsStr::new("sh"),
+            OsStr::new("-c"),
+            OsStr::new("while :; do sleep 1; done"),
+        ],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            result.diagnostics.push(format!(
+                "create window: {}",
+                format_output("create", &output)
+            ));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+        Err(error) => {
+            result
+                .diagnostics
+                .push(format!("create window failed: {error}"));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+    }
+
+    // 3. Kill window 0
+    match run_screen(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-p"),
+            OsStr::new("0"),
+            OsStr::new("-X"),
+            OsStr::new("kill"),
+        ],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            result.diagnostics.push(format!(
+                "kill window 0: {}",
+                format_output("kill0", &output)
+            ));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+        Err(error) => {
+            result
+                .diagnostics
+                .push(format!("kill window 0 failed: {error}"));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+    }
+
+    // 4. Verify session still exists by listing
+    match run_screen(
+        executable,
+        runtime,
+        [OsStr::new("-ls")],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) => {
+            result.session_survives_kill = output_lists_session(&output, session_name);
+            if !result.session_survives_kill {
+                result.diagnostics.push(format!(
+                    "list after kill: {}",
+                    format_output("list", &output)
+                ));
+            }
+        }
+        Err(error) => {
+            result
+                .diagnostics
+                .push(format!("list after kill failed: {error}"));
+        }
+    }
+
+    // 5. Create another window
+    match run_screen(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-X"),
+            OsStr::new("screen"),
+            OsStr::new("sh"),
+            OsStr::new("-c"),
+            OsStr::new("while :; do sleep 1; done"),
+        ],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            result.diagnostics.push(format!(
+                "create window2: {}",
+                format_output("create2", &output)
+            ));
+            // Don't abort - we can still verify listing
+        }
+        Err(error) => {
+            result
+                .diagnostics
+                .push(format!("create window2 failed: {error}"));
+        }
+    }
+
+    // 6. Verify session exists via listing (proves multi-window survival)
+    match run_screen(
+        executable,
+        runtime,
+        [OsStr::new("-ls")],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) => {
+            result.session_has_multiple = output_lists_session(&output, session_name);
+            if !result.session_has_multiple {
+                result.diagnostics.push(format!(
+                    "list after create2: {}",
+                    format_output("list2", &output)
+                ));
+            }
+        }
+        Err(error) => {
+            result
+                .diagnostics
+                .push(format!("list after create2 failed: {error}"));
+        }
+    }
+
+    // 7. Clean up
+    let quit = quit_session(implementation, executable, runtime, session_name);
+    match quit {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => result
+            .diagnostics
+            .push(format!("quit: {}", format_output("quit", &output))),
+        Err(error) => result.diagnostics.push(format!("quit failed: {error}")),
+    }
+
+    let cleanup = wait_until_no_session(implementation, executable, runtime, session_name);
+    if !cleanup.success {
+        result.diagnostics.push(cleanup.diagnostic);
+    }
+
+    result.completed =
+        result.session_survives_kill && result.session_has_multiple && cleanup.success;
+    result
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Implementation {
     Reference,
