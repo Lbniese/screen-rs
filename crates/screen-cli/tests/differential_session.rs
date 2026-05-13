@@ -1090,6 +1090,202 @@ fn run_multi_window_case(
     result
 }
 
+#[test]
+fn window_select_compares_with_gnu_screen() {
+    let reference = std::env::var_os("SCREEN_REFERENCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("screen"));
+    let candidate = std::env::var_os("SCREEN_CANDIDATE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_screen-rs")));
+
+    let reference_runtime = TempDir::new("sel-ref");
+    let candidate_runtime = TempDir::new("sel-cand");
+    if !unix_socket_bind_allowed(candidate_runtime.path()) {
+        eprintln!("skipping window-select differential test: Unix socket bind is not permitted");
+        return;
+    }
+
+    let reference_result = run_select_case(
+        Implementation::Reference,
+        &reference,
+        reference_runtime.path(),
+        "selcase",
+    );
+    let candidate_result = run_select_case(
+        Implementation::Candidate,
+        &candidate,
+        candidate_runtime.path(),
+        "selcase",
+    );
+
+    if !reference_result.completed
+        || !candidate_result.completed
+        || reference_result != candidate_result
+    {
+        eprintln!("window-select differential report");
+        eprintln!("reference: {reference_result:?}");
+        eprintln!("candidate: {candidate_result:?}");
+    }
+    assert!(reference_result.completed, "reference select case failed");
+    assert!(candidate_result.completed, "candidate select case failed");
+    assert_eq!(candidate_result, reference_result);
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SelectCaseResult {
+    completed: bool,
+    diagnostics: Vec<String>,
+}
+
+fn run_select_case(
+    implementation: Implementation,
+    executable: &Path,
+    runtime: &Path,
+    session_name: &str,
+) -> SelectCaseResult {
+    let mut result = SelectCaseResult {
+        completed: false,
+        diagnostics: Vec::new(),
+    };
+
+    // Start detached session with two windows
+    let shell_cmd = "while :; do sleep 1; done";
+    if let Err(error) = run_screen_null(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-d"),
+            OsStr::new("-m"),
+            OsStr::new("sh"),
+            OsStr::new("-c"),
+            OsStr::new(shell_cmd),
+        ],
+        Duration::from_secs(5),
+    )
+    .and_then(|s| {
+        if s.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other("start failed"))
+        }
+    }) {
+        result.diagnostics.push(format!("start session: {error}"));
+        return result;
+    }
+
+    // Create window 1
+    match run_screen(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-X"),
+            OsStr::new("screen"),
+            OsStr::new("sh"),
+            OsStr::new("-c"),
+            OsStr::new(shell_cmd),
+        ],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            result.diagnostics.push(format!(
+                "create window 1: {}",
+                format_output("create1", &output)
+            ));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+        Err(error) => {
+            result.diagnostics.push(format!("create window 1: {error}"));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+    }
+
+    // Select window 1
+    match run_screen(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-X"),
+            OsStr::new("select"),
+            OsStr::new("1"),
+        ],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            result.diagnostics.push(format!(
+                "select window: {}",
+                format_output("select", &output)
+            ));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+        Err(error) => {
+            result.diagnostics.push(format!("select window: {error}"));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+    }
+
+    // Select window 0
+    match run_screen(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-X"),
+            OsStr::new("select"),
+            OsStr::new("0"),
+        ],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            result.diagnostics.push(format!(
+                "select back: {}",
+                format_output("select0", &output)
+            ));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+        Err(error) => {
+            result.diagnostics.push(format!("select back: {error}"));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+    }
+
+    debug_assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+
+    // Clean up
+    let cleanup = quit_session(implementation, executable, runtime, session_name);
+    match cleanup {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => result
+            .diagnostics
+            .push(format!("quit: {}", format_output("quit", &output))),
+        Err(error) => result.diagnostics.push(format!("quit: {error}")),
+    }
+
+    let wait = wait_until_no_session(implementation, executable, runtime, session_name);
+    if !wait.success {
+        result.diagnostics.push(wait.diagnostic);
+    }
+
+    result.completed = result.diagnostics.is_empty() && wait.success;
+    result
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Implementation {
     Reference,

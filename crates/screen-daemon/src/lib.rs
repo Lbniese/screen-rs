@@ -10,7 +10,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use screen_protocol::{Message, ProtocolError, WindowInfoMsg};
 use screen_pty::{PtyCommand, PtyError, PtyProcess, PtySize};
@@ -78,6 +78,8 @@ pub struct PtySessionConfig {
     pub working_directory: Option<PathBuf>,
     pub client_timeout: Duration,
     pub output_buffer_limit: usize,
+    pub hardstatus_format: Option<Vec<u8>>,
+    pub scrollback_limit: Option<u32>,
 }
 
 impl PtySessionConfig {
@@ -96,6 +98,8 @@ impl PtySessionConfig {
             working_directory: None,
             client_timeout: Duration::from_secs(5),
             output_buffer_limit: 1024 * 1024,
+            hardstatus_format: None,
+            scrollback_limit: None,
         }
     }
 
@@ -122,6 +126,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
 
     // Create the initial window
     let mut session = SessionState::new();
+    session.hardstatus_format = config.hardstatus_format.clone();
     let _window0 = session.create_window(
         &config.program,
         &config.args,
@@ -129,6 +134,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
         &config.terminal,
         &sty,
         config.working_directory.as_deref(),
+        config.scrollback_limit,
     )?;
     let mut log_file = open_log_file(config.log_path.as_deref())?;
     let (client_tx, client_rx) = mpsc::channel();
@@ -206,6 +212,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         &config.terminal,
                         &sty,
                         config.working_directory.as_deref(),
+                        config.scrollback_limit,
                     );
                     match result {
                         Ok(win) => {
@@ -355,6 +362,14 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
             }
         }
 
+        // Generate and broadcast hardstatus if configured
+        if session.hardstatus_format.is_some() {
+            let status = session.format_hardstatus();
+            if !status.is_empty() && !clients.is_empty() {
+                broadcast(&mut clients, &Message::PtyOutput(status))?;
+            }
+        }
+
         thread::sleep(Duration::from_millis(10));
     }
 }
@@ -368,6 +383,7 @@ struct SessionState {
     next_id: u64,
     next_number: u32,
     paste_buffer: Vec<Vec<u8>>,
+    hardstatus_format: Option<Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -401,9 +417,11 @@ impl SessionState {
             next_id: 1,
             next_number: 0,
             paste_buffer: Vec::new(),
+            hardstatus_format: None,
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_window(
         &mut self,
         program: &OsStr,
@@ -412,6 +430,7 @@ impl SessionState {
         term: &OsStr,
         sty: &OsStr,
         working_directory: Option<&Path>,
+        scrollback_limit: Option<u32>,
     ) -> Result<WindowCreated, DaemonError> {
         let id = screen_core::WindowId(self.next_id);
         self.next_id += 1;
@@ -428,7 +447,10 @@ impl SessionState {
         cmd.env("TERM", term);
 
         let pty = cmd.spawn()?;
-        let terminal = TerminalState::new(Dimensions::new(size.columns, size.rows));
+        let mut terminal = TerminalState::new(Dimensions::new(size.columns, size.rows));
+        if let Some(limit) = scrollback_limit {
+            terminal.set_scrollback_limit(limit);
+        }
 
         let window = ManagedWindow {
             id,
@@ -585,23 +607,36 @@ impl SessionState {
 
     #[allow(dead_code)]
     fn format_hardstatus(&self) -> Vec<u8> {
-        let mut parts = Vec::new();
-        for w in &self.windows {
-            if w.alive {
-                let marker = if self.windows.get(self.selected).map(|s| s.number) == Some(w.number)
-                {
-                    "*"
-                } else {
-                    ""
-                };
-                parts.push(format!("{}{}", w.number, marker));
-            }
-        }
-        let host = std::env::var("HOSTNAME")
-            .or_else(|_| std::env::var("HOST"))
-            .unwrap_or_else(|_| String::from("localhost"));
-        let windows = parts.join(" ");
-        format!(" {} | {}", windows, host).into_bytes()
+        let Some(format) = &self.hardstatus_format else {
+            return Vec::new();
+        };
+        let active_number = self
+            .windows
+            .get(self.selected)
+            .map(|w| w.number)
+            .unwrap_or(0);
+        let active_title = self
+            .windows
+            .get(self.selected)
+            .and_then(|w| w.terminal.title.clone())
+            .unwrap_or_default();
+        let winfos: Vec<screen_core::hardstatus::WindowInfo> = self
+            .windows
+            .iter()
+            .filter(|w| w.alive)
+            .map(|w| screen_core::hardstatus::WindowInfo {
+                number: w.number,
+                flags: if w.number == active_number { 1 } else { 0 },
+                title: w.terminal.title.clone().unwrap_or_default(),
+            })
+            .collect();
+        screen_core::hardstatus::expand_hardstatus(
+            format,
+            active_number,
+            &active_title,
+            &winfos,
+            SystemTime::now(),
+        )
     }
 }
 
@@ -621,6 +656,32 @@ impl ManagedWindow {
             let excess = self.output_buffer.len() - limit;
             self.output_buffer.drain(..excess);
         }
+    }
+
+    /// Build a full-screen redraw from the terminal grid.
+    /// Returns escape sequences to clear the screen, draw each line,
+    /// and reposition the cursor.
+    fn grid_redraw(&self) -> Vec<u8> {
+        let mut dump = Vec::with_capacity(4096);
+        let rows = self.terminal.dimensions.rows;
+        // Clear screen, home cursor
+        dump.extend_from_slice(b"\x1b[H\x1b[J");
+        for row in 0..rows {
+            if let Some(line) = self.terminal.line_bytes(row) {
+                dump.extend_from_slice(&line);
+            }
+            if row + 1 < rows {
+                dump.extend_from_slice(b"\r\n");
+            }
+        }
+        // Restore cursor position
+        let cursor_pos = format!(
+            "\x1b[{};{}H",
+            self.terminal.cursor.row + 1,
+            self.terminal.cursor.column + 1
+        );
+        dump.extend_from_slice(cursor_pos.as_bytes());
+        dump
     }
 
     /// Return scrollback lines derived from the terminal engine.
@@ -804,11 +865,12 @@ fn accept_connections(
                 match Message::read_from(&mut stream) {
                     Ok(Message::Attach) => {
                         // Full attach - add to clients list
-                        if let Some(window) = session.windows.get(session.selected)
-                            && !window.output_buffer.is_empty()
-                        {
-                            Message::PtyOutput(window.output_buffer.clone())
-                                .write_to(&mut stream)?;
+                        // Send a grid redraw so the client sees current terminal state
+                        if let Some(window) = session.windows.get(session.selected) {
+                            let redraw = window.grid_redraw();
+                            if !redraw.is_empty() {
+                                Message::PtyOutput(redraw).write_to(&mut stream)?;
+                            }
                         }
                         clear_client_read_timeout(&stream)?;
                         let id = *next_client_id;
@@ -845,6 +907,7 @@ fn accept_connections(
                             &config.terminal,
                             &sty_value(&config.socket_path),
                             config.working_directory.as_deref(),
+                            config.scrollback_limit,
                         );
                         match result {
                             Ok(win) => {

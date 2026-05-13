@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use screen_cli::{
     AttachOptions, AttachOrCreateOptions, CreateDetachedOptions, CreateOptions, Invocation,
-    ListOptions, RemoteCommandOptions, WipeOptions, parse_invocation,
+    ListOptions, QueryOptions, RemoteCommandOptions, WipeOptions, parse_invocation,
 };
 use screen_daemon::PtySessionConfig;
 use screen_platform::{RuntimeDirectory, SocketPathStatus, current_effective_uid};
@@ -67,6 +67,7 @@ fn main() -> ExitCode {
             }
         },
         Ok(Invocation::RemoteCommand(options)) => report_result(remote_command(options)),
+        Ok(Invocation::Query(options)) => report_result(query_command(options)),
         Ok(Invocation::List(options)) => match list_sessions(options) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
@@ -200,6 +201,14 @@ fn start_session_daemon(options: SessionStartOptions) -> Result<OsString, String
     if let Some(working_directory) = &working_directory {
         command.arg("--cwd").arg(working_directory);
     }
+    if let Some(hardstatus) = &startup_config.hardstatus {
+        // Hex-encode the format string so it survives CLI argument passing safely
+        let hex: String = hardstatus.iter().map(|b| format!("{b:02x}")).collect();
+        command.arg("--hardstatus").arg(&hex);
+    }
+    if let Some(limit) = startup_config.defscrollback {
+        command.arg("--scrollback").arg(format!("{limit}"));
+    }
     command
         .arg("--")
         .arg(&program)
@@ -275,6 +284,8 @@ struct StartupOverrides {
     working_directory: Option<PathBuf>,
     logging: Option<bool>,
     log_file: Option<PathBuf>,
+    hardstatus: Option<Vec<u8>>,
+    defscrollback: Option<u32>,
 }
 
 fn load_startup_config(config_file: Option<OsString>) -> Result<StartupOverrides, String> {
@@ -299,6 +310,8 @@ fn load_startup_config(config_file: Option<OsString>) -> Result<StartupOverrides
         log_file: config
             .logfile
             .map(|bytes| PathBuf::from(OsString::from_vec(bytes))),
+        hardstatus: config.hardstatus,
+        defscrollback: config.defscrollback,
     })
 }
 
@@ -307,11 +320,39 @@ fn default_screenrc_path() -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
+/// Decode a hex string (like "48656c6c6f") into bytes.
+fn hex_decode(hex: &OsStr) -> Result<Vec<u8>, String> {
+    let hex = hex.as_encoded_bytes();
+    if !hex.len().is_multiple_of(2) {
+        return Err("hex string has odd length".to_owned());
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| {
+            let hi = hex_val(hex[i]).ok_or_else(|| format!("invalid hex byte at position {i}"))?;
+            let lo = hex_val(hex[i + 1])
+                .ok_or_else(|| format!("invalid hex byte at position {}", i + 1))?;
+            Ok(hi << 4 | lo)
+        })
+        .collect()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
     let mut index = 2;
     let mut terminal = None;
     let mut log_path = None;
     let mut working_directory = None;
+    let mut hardstatus = None;
+    let mut scrollback = None;
     while let Some(option) = args.get(index) {
         if option == OsStr::new("--term") {
             index += 1;
@@ -333,6 +374,26 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
                 "internal daemon mode --cwd requires an argument before --".to_owned()
             })?;
             working_directory = Some(PathBuf::from(value));
+            index += 1;
+        } else if option == OsStr::new("--hardstatus") {
+            index += 1;
+            let hex = args.get(index).ok_or_else(|| {
+                "internal daemon mode --hardstatus requires an argument before --".to_owned()
+            })?;
+            hardstatus = Some(hex_decode(hex).map_err(|e| format!("invalid hardstatus hex: {e}"))?);
+            index += 1;
+        } else if option == OsStr::new("--scrollback") {
+            index += 1;
+            let value = args.get(index).ok_or_else(|| {
+                "internal daemon mode --scrollback requires an argument before --".to_owned()
+            })?;
+            scrollback = Some(
+                value
+                    .to_str()
+                    .ok_or_else(|| "scrollback value is not valid UTF-8".to_owned())?
+                    .parse::<u32>()
+                    .map_err(|e| format!("invalid scrollback: {e}"))?,
+            );
             index += 1;
         } else {
             break;
@@ -356,6 +417,8 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
     }
     config.log_path = log_path;
     config.working_directory = working_directory;
+    config.hardstatus_format = hardstatus;
+    config.scrollback_limit = scrollback;
     screen_daemon::run_pty_session(config).map_err(|error| error.to_string())
 }
 
@@ -662,6 +725,23 @@ fn remote_command(options: RemoteCommandOptions) -> Result<(), String> {
     } else {
         Err(format!(
             "remote command is not implemented yet: {}",
+            command.to_string_lossy()
+        ))
+    }
+}
+
+fn query_command(options: QueryOptions) -> Result<(), String> {
+    let Some(command) = options.command.first() else {
+        return Err("query command requires a command name".to_owned());
+    };
+
+    if command == OsStr::new("windows") || command == OsStr::new("winlist") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_windows_list(socket_path)
+    } else {
+        Err(format!(
+            "query command is not implemented yet: {}",
             command.to_string_lossy()
         ))
     }
