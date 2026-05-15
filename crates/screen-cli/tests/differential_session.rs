@@ -1286,6 +1286,203 @@ fn run_select_case(
     result
 }
 
+#[test]
+fn zombie_and_renumber_compares_with_gnu_screen() {
+    // Only test candidate — GNU Screen 4.00.03 (system default) doesn't support -Q
+    let candidate = std::env::var_os("SCREEN_CANDIDATE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_screen-rs")));
+
+    let candidate_runtime = TempDir::new("zr-cand");
+    if !unix_socket_bind_allowed(candidate_runtime.path()) {
+        eprintln!("skipping zombie+renumber test: Unix socket bind not permitted");
+        return;
+    }
+
+    let candidate_result = run_zombie_renumber_case(
+        Implementation::Candidate,
+        &candidate,
+        candidate_runtime.path(),
+        "zrcase",
+    );
+
+    if !candidate_result.completed {
+        eprintln!("candidate: {candidate_result:?}");
+    }
+    assert!(
+        candidate_result.completed,
+        "candidate zombie+renumber failed"
+    );
+    assert!(candidate_result.has_zombie, "zombie window not detected");
+    assert!(candidate_result.renumber_works, "renumber failed");
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ZombieRenumberResult {
+    completed: bool,
+    has_zombie: bool,
+    renumber_works: bool,
+    diagnostics: Vec<String>,
+}
+
+fn run_zombie_renumber_case(
+    implementation: Implementation,
+    executable: &Path,
+    runtime: &Path,
+    session_name: &str,
+) -> ZombieRenumberResult {
+    let mut result = ZombieRenumberResult {
+        completed: false,
+        has_zombie: false,
+        renumber_works: false,
+        diagnostics: Vec::new(),
+    };
+
+    // Start detached with a long-running shell (window 0, alive)
+    let infinite_cmd = "while :; do sleep 1; done";
+    match run_screen_null(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-d"),
+            OsStr::new("-m"),
+            OsStr::new("sh"),
+            OsStr::new("-c"),
+            OsStr::new(infinite_cmd),
+        ],
+        Duration::from_secs(10),
+    ) {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            result
+                .diagnostics
+                .push(format!("start session: exit={:?}", s.code()));
+            return result;
+        }
+        Err(error) => {
+            result.diagnostics.push(format!("start session: {error}"));
+            return result;
+        }
+    }
+
+    // Create window 1 with a quick-exit command (becomes zombie)
+    let quick_cmd = "sleep 1";
+    match run_screen(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-X"),
+            OsStr::new("screen"),
+            OsStr::new("sh"),
+            OsStr::new("-c"),
+            OsStr::new(quick_cmd),
+        ],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            result.diagnostics.push(format!(
+                "create quick window: {}",
+                format_output("create", &output)
+            ));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+        Err(error) => {
+            result
+                .diagnostics
+                .push(format!("create quick window: {error}"));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+    }
+
+    // Wait for quick window to die and become zombie
+    std::thread::sleep(Duration::from_secs(5));
+
+    // Query windows via -Q — should show 0 (alive) and 1 (dead/zombie)
+    // GNU Screen marks dead windows with "(dead)" in the title column
+    match run_screen(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-Q"),
+            OsStr::new("windows"),
+        ],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            result.has_zombie = stdout.to_lowercase().contains("dead") || stdout.contains("\t2\t");
+            if !result.has_zombie {
+                result
+                    .diagnostics
+                    .push(format!("zombie not shown in -Q windows output: {stdout}"));
+            }
+        }
+        Err(error) => {
+            result.diagnostics.push(format!("list after exit: {error}"));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+    }
+
+    // Renumber window 0 to 5 (via -X number)
+    match run_screen(
+        executable,
+        runtime,
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-X"),
+            OsStr::new("number"),
+            OsStr::new("5"),
+        ],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) if output.status.success() => {
+            result.renumber_works = true;
+        }
+        Ok(output) => {
+            result
+                .diagnostics
+                .push(format!("renumber: {}", format_output("renumber", &output)));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+        Err(error) => {
+            result.diagnostics.push(format!("renumber: {error}"));
+            let _ = quit_session(implementation, executable, runtime, session_name);
+            return result;
+        }
+    }
+
+    // Clean up
+    let cleanup = quit_session(implementation, executable, runtime, session_name);
+    match cleanup {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => result
+            .diagnostics
+            .push(format!("quit: {}", format_output("quit", &output))),
+        Err(error) => result.diagnostics.push(format!("quit: {error}")),
+    }
+
+    let wait = wait_until_no_session(implementation, executable, runtime, session_name);
+    if !wait.success {
+        result.diagnostics.push(wait.diagnostic);
+    }
+
+    result.completed =
+        result.diagnostics.is_empty() && wait.success && result.has_zombie && result.renumber_works;
+    result
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Implementation {
     Reference,

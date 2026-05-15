@@ -71,6 +71,95 @@ pub enum Message {
     CopyModeData(Vec<Vec<u8>>),
     PasteRequest(Vec<u8>),
     HardstatusLine(Vec<u8>),
+    RenumberWindow {
+        number: u32,
+    },
+    /// Request the daemon to redraw all attached clients' displays.
+    Redisplay,
+    /// Remove a specific dead (zombie) window from the session.
+    RemoveWindow {
+        number: u32,
+    },
+    /// Remove all dead windows from the session.
+    WipeDeadWindows,
+    /// Display a short message on all attached clients.
+    Echo(Vec<u8>),
+    /// Enable or disable logging for the current window.
+    LogToggle {
+        enable: bool,
+    },
+    /// Set the log file path for logging.
+    LogFile(Vec<u8>),
+    /// Toggle to the previously-visited window for this client.
+    OtherWindow,
+    /// Toggle activity monitoring for the current window.
+    MonitorToggle {
+        enable: bool,
+    },
+    /// Notification from daemon that a monitored window had activity.
+    Activity(Vec<u8>),
+    /// Set silence monitoring timeout for the current window (0 = off).
+    Silence {
+        seconds: u16,
+    },
+    /// Bell notification from daemon.
+    Bell(Vec<u8>),
+    /// Toggle line wrapping for the current window.
+    WrapToggle {
+        enable: bool,
+    },
+    /// Read the exchange file into the paste buffer.
+    ReadBuf,
+    /// Write the paste buffer to the exchange file.
+    WriteBuf(Vec<u8>),
+    /// Remove the exchange file.
+    RemoveBuf,
+    /// Named register operation (name 0 = get, non-zero data = set, empty data = get).
+    Register {
+        name: u8,
+        data: Vec<u8>,
+    },
+    /// Flow control: enable or disable XON/XOFF handling.
+    FlowToggle {
+        enable: bool,
+    },
+    /// Send XOFF (Ctrl-S) to the current window.
+    Xoff,
+    /// Send XON (Ctrl-Q) to the current window.
+    Xon,
+    /// Send a break signal to the current window.
+    BreakSignal {
+        ms: u16,
+    },
+    /// Window info response from daemon.
+    WindowInfo(Vec<u8>),
+    /// Search scrollback history for a pattern.
+    SearchHistory(Vec<u8>),
+    /// Search history results.
+    SearchResult(Vec<u32>),
+    /// Execute an arbitrary screen command string (for -X colon).
+    Command(Vec<u8>),
+    /// Send input to a specific window by number (-X at).
+    AtWindow(u32, Vec<u8>),
+    /// Write current terminal contents to a file (hardcopy).
+    Hardcopy(u32, Vec<u8>),
+    SplitVertical,
+    RemoveRegion,
+    OnlyWindow,
+    FocusNext,
+    FocusPrev,
+    ResizeRegion(i16),
+    RegionLayout(Vec<(u32, u16, u16, bool)>),
+    /// Copy mode: move cursor up/down in scrollback.
+    CopyModeMove(i32),
+    /// Copy mode: set mark at current position.
+    CopyModeMark,
+    /// Copy mode: copy marked region to buffer and exit.
+    CopyModeCopy,
+    /// Copy mode: insert register contents at current window cursor.
+    CopyModePaste(Vec<u8>),
+    /// Copy mode cursor position broadcast: (line_index, column, total_lines).
+    CopyModeCursor(u32, u16, u32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +181,22 @@ impl Message {
         let kill_window_payload;
         let window_title_payload;
         let copy_mode_payload;
+        let renumber_window_payload;
+        let remove_window_payload;
+        let log_toggle_payload;
+        let monitor_toggle_payload;
+        let silence_payload;
+        let wrap_toggle_payload;
+        let register_payload;
+        let flow_toggle_payload;
+        let break_payload;
+        let search_result_payload;
+        let hardcopy_payload;
+        let resize_region_payload;
+        let region_layout_payload;
+        let at_window_payload;
+        let copy_move_payload;
+        let copy_cursor_payload;
         let (kind, payload): (MessageKind, &[u8]) = match self {
             Self::Hello => (MessageKind::Hello, &[][..]),
             Self::HelloAck => (MessageKind::HelloAck, &[][..]),
@@ -194,6 +299,124 @@ impl Message {
             }
             Self::PasteRequest(data) => (MessageKind::PasteRequest, checked_payload(data)?),
             Self::HardstatusLine(data) => (MessageKind::HardstatusLine, checked_payload(data)?),
+            Self::RenumberWindow { number } => {
+                renumber_window_payload = number.to_be_bytes();
+                (MessageKind::RenumberWindow, &renumber_window_payload[..])
+            }
+            Self::Redisplay => (MessageKind::Redisplay, &[]),
+            Self::RemoveWindow { number } => {
+                remove_window_payload = number.to_be_bytes();
+                (MessageKind::RemoveWindow, &remove_window_payload[..])
+            }
+            Self::WipeDeadWindows => (MessageKind::WipeDeadWindows, &[]),
+            Self::Echo(payload) => (MessageKind::Echo, checked_payload(payload)?),
+            Self::LogToggle { enable } => {
+                log_toggle_payload = [*enable as u8];
+                (MessageKind::LogToggle, &log_toggle_payload[..])
+            }
+            Self::LogFile(payload) => (MessageKind::LogFile, checked_payload(payload)?),
+            Self::OtherWindow => (MessageKind::OtherWindow, &[]),
+            Self::MonitorToggle { enable } => {
+                monitor_toggle_payload = [*enable as u8];
+                (MessageKind::MonitorToggle, &monitor_toggle_payload[..])
+            }
+            Self::Activity(payload) => (MessageKind::Activity, checked_payload(payload)?),
+            Self::Silence { seconds } => {
+                silence_payload = seconds.to_be_bytes();
+                (MessageKind::Silence, &silence_payload[..])
+            }
+            Self::Bell(payload) => (MessageKind::Bell, checked_payload(payload)?),
+            Self::WrapToggle { enable } => {
+                wrap_toggle_payload = [*enable as u8];
+                (MessageKind::WrapToggle, &wrap_toggle_payload[..])
+            }
+            Self::ReadBuf => (MessageKind::ReadBuf, &[]),
+            Self::WriteBuf(payload) => (MessageKind::WriteBuf, checked_payload(payload)?),
+            Self::RemoveBuf => (MessageKind::RemoveBuf, &[]),
+            Self::Register { name, data } => {
+                register_payload = encode_register(*name, data);
+                (MessageKind::Register, checked_payload(&register_payload)?)
+            }
+            Self::FlowToggle { enable } => {
+                flow_toggle_payload = [*enable as u8];
+                (MessageKind::FlowToggle, &flow_toggle_payload[..])
+            }
+            Self::Xoff => (MessageKind::Xoff, &[]),
+            Self::Xon => (MessageKind::Xon, &[]),
+            Self::BreakSignal { ms } => {
+                break_payload = ms.to_be_bytes();
+                (MessageKind::BreakSignal, &break_payload[..])
+            }
+            Self::WindowInfo(payload) => (MessageKind::WindowInfo, checked_payload(payload)?),
+            Self::SearchHistory(payload) => (MessageKind::SearchHistory, checked_payload(payload)?),
+            Self::SearchResult(lines) => {
+                search_result_payload = encode_search_result(lines);
+                (
+                    MessageKind::SearchResult,
+                    checked_payload(&search_result_payload)?,
+                )
+            }
+            Self::Command(payload) => (MessageKind::Command, checked_payload(payload)?),
+            Self::Hardcopy(num, payload) => {
+                let len = 4 + payload.len();
+                hardcopy_payload = {
+                    let mut buf = Vec::with_capacity(len);
+                    buf.extend_from_slice(&num.to_be_bytes());
+                    buf.extend_from_slice(payload);
+                    buf
+                };
+                (MessageKind::Hardcopy, checked_payload(&hardcopy_payload)?)
+            }
+            Self::AtWindow(num, payload) => {
+                let len = 4 + payload.len();
+                at_window_payload = {
+                    let mut buf = Vec::with_capacity(len);
+                    buf.extend_from_slice(&num.to_be_bytes());
+                    buf.extend_from_slice(payload);
+                    buf
+                };
+                (MessageKind::AtWindow, checked_payload(&at_window_payload)?)
+            }
+            Self::SplitVertical => (MessageKind::SplitVertical, &[][..]),
+            Self::RemoveRegion => (MessageKind::RemoveRegion, &[][..]),
+            Self::OnlyWindow => (MessageKind::OnlyWindow, &[][..]),
+            Self::FocusNext => (MessageKind::FocusNext, &[][..]),
+            Self::FocusPrev => (MessageKind::FocusPrev, &[][..]),
+            Self::ResizeRegion(delta) => {
+                resize_region_payload = delta.to_be_bytes();
+                (
+                    MessageKind::ResizeRegion,
+                    checked_payload(&resize_region_payload)?,
+                )
+            }
+            Self::RegionLayout(regions) => {
+                region_layout_payload = encode_region_layout(regions);
+                (
+                    MessageKind::RegionLayout,
+                    checked_payload(&region_layout_payload)?,
+                )
+            }
+            Self::CopyModeMove(delta) => {
+                copy_move_payload = delta.to_be_bytes();
+                (
+                    MessageKind::CopyModeMove,
+                    checked_payload(&copy_move_payload)?,
+                )
+            }
+            Self::CopyModeMark => (MessageKind::CopyModeMark, &[][..]),
+            Self::CopyModeCopy => (MessageKind::CopyModeCopy, &[][..]),
+            Self::CopyModePaste(data) => (MessageKind::CopyModePaste, checked_payload(data)?),
+            Self::CopyModeCursor(line, col, total) => {
+                let mut buf = Vec::with_capacity(10);
+                buf.extend_from_slice(&line.to_be_bytes());
+                buf.extend_from_slice(&col.to_be_bytes());
+                buf.extend_from_slice(&total.to_be_bytes());
+                copy_cursor_payload = buf;
+                (
+                    MessageKind::CopyModeCursor,
+                    checked_payload(&copy_cursor_payload)?,
+                )
+            }
         };
 
         writer.write_all(&MAGIC).map_err(ProtocolError::Io)?;
@@ -309,6 +532,96 @@ impl Message {
             }
             MessageKind::PasteRequest => Ok(Self::PasteRequest(payload.to_vec())),
             MessageKind::HardstatusLine => Ok(Self::HardstatusLine(payload.to_vec())),
+            MessageKind::RenumberWindow if payload.len() == 4 => {
+                let bytes: [u8; 4] = payload.try_into().unwrap();
+                Ok(Self::RenumberWindow {
+                    number: u32::from_be_bytes(bytes),
+                })
+            }
+            MessageKind::Redisplay if payload.is_empty() => Ok(Self::Redisplay),
+            MessageKind::RemoveWindow if payload.len() == 4 => {
+                let bytes: [u8; 4] = payload.try_into().unwrap();
+                Ok(Self::RemoveWindow {
+                    number: u32::from_be_bytes(bytes),
+                })
+            }
+            MessageKind::WipeDeadWindows if payload.is_empty() => Ok(Self::WipeDeadWindows),
+            MessageKind::Echo => Ok(Self::Echo(payload.to_vec())),
+            MessageKind::LogToggle if payload.len() == 1 => Ok(Self::LogToggle {
+                enable: payload[0] != 0,
+            }),
+            MessageKind::LogFile => Ok(Self::LogFile(payload.to_vec())),
+            MessageKind::OtherWindow if payload.is_empty() => Ok(Self::OtherWindow),
+            MessageKind::MonitorToggle if payload.len() == 1 => Ok(Self::MonitorToggle {
+                enable: payload[0] != 0,
+            }),
+            MessageKind::Activity => Ok(Self::Activity(payload.to_vec())),
+            MessageKind::Silence if payload.len() == 2 => {
+                let seconds = u16::from_be_bytes([payload[0], payload[1]]);
+                Ok(Self::Silence { seconds })
+            }
+            MessageKind::Bell => Ok(Self::Bell(payload.to_vec())),
+            MessageKind::WrapToggle if payload.len() == 1 => Ok(Self::WrapToggle {
+                enable: payload[0] != 0,
+            }),
+            MessageKind::ReadBuf if payload.is_empty() => Ok(Self::ReadBuf),
+            MessageKind::WriteBuf => Ok(Self::WriteBuf(payload.to_vec())),
+            MessageKind::RemoveBuf if payload.is_empty() => Ok(Self::RemoveBuf),
+            MessageKind::Register if !payload.is_empty() => {
+                let name = payload[0];
+                let data = payload[1..].to_vec();
+                Ok(Self::Register { name, data })
+            }
+            MessageKind::FlowToggle if payload.len() == 1 => Ok(Self::FlowToggle {
+                enable: payload[0] != 0,
+            }),
+            MessageKind::Xoff if payload.is_empty() => Ok(Self::Xoff),
+            MessageKind::Xon if payload.is_empty() => Ok(Self::Xon),
+            MessageKind::BreakSignal if payload.len() == 2 => {
+                let ms = u16::from_be_bytes([payload[0], payload[1]]);
+                Ok(Self::BreakSignal { ms })
+            }
+            MessageKind::WindowInfo => Ok(Self::WindowInfo(payload.to_vec())),
+            MessageKind::SearchHistory => Ok(Self::SearchHistory(payload.to_vec())),
+            MessageKind::SearchResult => {
+                let lines = decode_search_result(&payload);
+                Ok(Self::SearchResult(lines))
+            }
+            MessageKind::Command => Ok(Self::Command(payload.to_vec())),
+            MessageKind::Hardcopy if payload.len() >= 4 => {
+                let num = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                Ok(Self::Hardcopy(num, payload[4..].to_vec()))
+            }
+            MessageKind::AtWindow if payload.len() >= 4 => {
+                let num = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                Ok(Self::AtWindow(num, payload[4..].to_vec()))
+            }
+            MessageKind::SplitVertical => Ok(Self::SplitVertical),
+            MessageKind::RemoveRegion => Ok(Self::RemoveRegion),
+            MessageKind::OnlyWindow => Ok(Self::OnlyWindow),
+            MessageKind::FocusNext => Ok(Self::FocusNext),
+            MessageKind::FocusPrev => Ok(Self::FocusPrev),
+            MessageKind::ResizeRegion if payload.len() == 2 => {
+                let delta = i16::from_be_bytes([payload[0], payload[1]]);
+                Ok(Self::ResizeRegion(delta))
+            }
+            MessageKind::RegionLayout => {
+                let regions = decode_region_layout(&payload);
+                Ok(Self::RegionLayout(regions))
+            }
+            MessageKind::CopyModeMove if payload.len() == 4 => {
+                let delta = i32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                Ok(Self::CopyModeMove(delta))
+            }
+            MessageKind::CopyModeMark => Ok(Self::CopyModeMark),
+            MessageKind::CopyModeCopy => Ok(Self::CopyModeCopy),
+            MessageKind::CopyModePaste => Ok(Self::CopyModePaste(payload.to_vec())),
+            MessageKind::CopyModeCursor if payload.len() >= 10 => {
+                let line = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                let col = u16::from_be_bytes([payload[4], payload[5]]);
+                let total = u32::from_be_bytes([payload[6], payload[7], payload[8], payload[9]]);
+                Ok(Self::CopyModeCursor(line, col, total))
+            }
             _ => Err(ProtocolError::UnexpectedPayload {
                 kind: kind as u8,
                 len: payload.len(),
@@ -346,6 +659,45 @@ enum MessageKind {
     CopyModeData = 22,
     PasteRequest = 23,
     HardstatusLine = 24,
+    RenumberWindow = 25,
+    Redisplay = 26,
+    RemoveWindow = 27,
+    WipeDeadWindows = 28,
+    Echo = 29,
+    LogToggle = 30,
+    LogFile = 31,
+    OtherWindow = 32,
+    MonitorToggle = 33,
+    Activity = 34,
+    Silence = 35,
+    Bell = 36,
+    WrapToggle = 37,
+    ReadBuf = 38,
+    WriteBuf = 39,
+    RemoveBuf = 40,
+    Register = 41,
+    FlowToggle = 42,
+    Xoff = 43,
+    Xon = 44,
+    BreakSignal = 45,
+    WindowInfo = 46,
+    SearchHistory = 47,
+    SearchResult = 48,
+    Command = 49,
+    Hardcopy = 50,
+    AtWindow = 51,
+    SplitVertical = 52,
+    RemoveRegion = 53,
+    OnlyWindow = 54,
+    FocusNext = 55,
+    FocusPrev = 56,
+    ResizeRegion = 57,
+    RegionLayout = 58,
+    CopyModeMove = 59,
+    CopyModeMark = 60,
+    CopyModeCopy = 61,
+    CopyModePaste = 62,
+    CopyModeCursor = 63,
 }
 
 impl TryFrom<u8> for MessageKind {
@@ -377,6 +729,45 @@ impl TryFrom<u8> for MessageKind {
             22 => Ok(Self::CopyModeData),
             23 => Ok(Self::PasteRequest),
             24 => Ok(Self::HardstatusLine),
+            25 => Ok(Self::RenumberWindow),
+            26 => Ok(Self::Redisplay),
+            27 => Ok(Self::RemoveWindow),
+            28 => Ok(Self::WipeDeadWindows),
+            29 => Ok(Self::Echo),
+            30 => Ok(Self::LogToggle),
+            31 => Ok(Self::LogFile),
+            32 => Ok(Self::OtherWindow),
+            33 => Ok(Self::MonitorToggle),
+            34 => Ok(Self::Activity),
+            35 => Ok(Self::Silence),
+            36 => Ok(Self::Bell),
+            37 => Ok(Self::WrapToggle),
+            38 => Ok(Self::ReadBuf),
+            39 => Ok(Self::WriteBuf),
+            40 => Ok(Self::RemoveBuf),
+            41 => Ok(Self::Register),
+            42 => Ok(Self::FlowToggle),
+            43 => Ok(Self::Xoff),
+            44 => Ok(Self::Xon),
+            45 => Ok(Self::BreakSignal),
+            46 => Ok(Self::WindowInfo),
+            47 => Ok(Self::SearchHistory),
+            48 => Ok(Self::SearchResult),
+            49 => Ok(Self::Command),
+            50 => Ok(Self::Hardcopy),
+            51 => Ok(Self::AtWindow),
+            52 => Ok(Self::SplitVertical),
+            53 => Ok(Self::RemoveRegion),
+            54 => Ok(Self::OnlyWindow),
+            55 => Ok(Self::FocusNext),
+            56 => Ok(Self::FocusPrev),
+            57 => Ok(Self::ResizeRegion),
+            58 => Ok(Self::RegionLayout),
+            59 => Ok(Self::CopyModeMove),
+            60 => Ok(Self::CopyModeMark),
+            61 => Ok(Self::CopyModeCopy),
+            62 => Ok(Self::CopyModePaste),
+            63 => Ok(Self::CopyModeCursor),
             255 => Ok(Self::Error),
             value => Err(ProtocolError::UnknownMessage(value)),
         }
@@ -545,6 +936,45 @@ fn decode_copy_mode_data(payload: &[u8]) -> Vec<Vec<u8>> {
     lines
 }
 
+fn encode_register(name: u8, data: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(1 + data.len());
+    buf.push(name);
+    buf.extend_from_slice(data);
+    buf
+}
+
+fn encode_search_result(lines: &[u32]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(2 + lines.len() * 4);
+    buf.extend_from_slice(&(lines.len() as u16).to_be_bytes());
+    for line in lines {
+        buf.extend_from_slice(&line.to_be_bytes());
+    }
+    buf
+}
+
+fn decode_search_result(payload: &[u8]) -> Vec<u32> {
+    if payload.len() < 2 {
+        return Vec::new();
+    }
+    let count = u16::from_be_bytes([payload[0], payload[1]]) as usize;
+    let mut result = Vec::with_capacity(count.min(10000));
+    let mut offset = 2usize;
+    for _ in 0..count {
+        if offset + 4 > payload.len() {
+            break;
+        }
+        let line = u32::from_be_bytes([
+            payload[offset],
+            payload[offset + 1],
+            payload[offset + 2],
+            payload[offset + 3],
+        ]);
+        result.push(line);
+        offset += 4;
+    }
+    result
+}
+
 #[derive(Debug)]
 pub enum ProtocolError {
     Io(io::Error),
@@ -582,6 +1012,30 @@ impl Error for ProtocolError {
             _ => None,
         }
     }
+}
+
+fn encode_region_layout(regions: &[(u32, u16, u16, bool)]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(regions.len() * 9);
+    for (num, top, height, focused) in regions {
+        buf.extend_from_slice(&num.to_be_bytes());
+        buf.extend_from_slice(&top.to_be_bytes());
+        buf.extend_from_slice(&height.to_be_bytes());
+        buf.push(if *focused { 1 } else { 0 });
+    }
+    buf
+}
+
+fn decode_region_layout(payload: &[u8]) -> Vec<(u32, u16, u16, bool)> {
+    payload
+        .chunks_exact(9)
+        .map(|c| {
+            let num = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
+            let top = u16::from_be_bytes([c[4], c[5]]);
+            let height = u16::from_be_bytes([c[6], c[7]]);
+            let focused = c[8] != 0;
+            (num, top, height, focused)
+        })
+        .collect()
 }
 
 #[cfg(test)]

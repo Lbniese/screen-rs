@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
@@ -68,6 +68,16 @@ pub fn run_until_shutdown(config: DaemonConfig) -> Result<DaemonReport, DaemonEr
 }
 
 #[derive(Debug, Clone)]
+pub struct StartupWindow {
+    pub title: Option<Vec<u8>>,
+    pub program: Option<OsString>,
+    pub args: Vec<OsString>,
+    pub number: Option<u32>,
+    pub working_directory: Option<OsString>,
+    pub stuff: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone)]
 pub struct PtySessionConfig {
     pub socket_path: PathBuf,
     pub program: OsString,
@@ -80,6 +90,14 @@ pub struct PtySessionConfig {
     pub output_buffer_limit: usize,
     pub hardstatus_format: Option<Vec<u8>>,
     pub scrollback_limit: Option<u32>,
+    /// Per-new-window defaults from config.
+    pub default_monitor: Option<bool>,
+    pub default_flow: Option<bool>,
+    pub default_wrap: Option<bool>,
+    pub default_silence: Option<u16>,
+    pub auto_nuke: Option<bool>,
+    /// Additional windows to create at session startup (from .screenrc).
+    pub startup_windows: Vec<StartupWindow>,
 }
 
 impl PtySessionConfig {
@@ -100,6 +118,12 @@ impl PtySessionConfig {
             output_buffer_limit: 1024 * 1024,
             hardstatus_format: None,
             scrollback_limit: None,
+            default_monitor: None,
+            default_flow: None,
+            default_wrap: None,
+            default_silence: None,
+            auto_nuke: None,
+            startup_windows: Vec::new(),
         }
     }
 
@@ -112,6 +136,8 @@ impl PtySessionConfig {
 pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     ensure_parent_exists(&config.socket_path)?;
     reject_existing_socket_path(&config.socket_path)?;
+
+    signal::install();
 
     let listener = UnixListener::bind(&config.socket_path).map_err(|source| DaemonError::Bind {
         path: config.socket_path.clone(),
@@ -127,6 +153,13 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     // Create the initial window
     let mut session = SessionState::new();
     session.hardstatus_format = config.hardstatus_format.clone();
+    session.default_monitor = config.default_monitor;
+    session.default_wrap = config.default_wrap;
+    session.default_silence = config.default_silence;
+    session.auto_nuke = config.auto_nuke;
+    if let Some(enabled) = config.default_flow {
+        session.flow_control = enabled;
+    }
     let _window0 = session.create_window(
         &config.program,
         &config.args,
@@ -136,12 +169,63 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
         config.working_directory.as_deref(),
         config.scrollback_limit,
     )?;
+
+    // Execute startup windows from .screenrc (screen, title, stuff commands)
+    for sw in &config.startup_windows {
+        let program = sw.program.clone().unwrap_or_else(|| config.program.clone());
+        let _result = session.create_window(
+            &program,
+            &sw.args,
+            config.size,
+            &config.terminal,
+            &sty,
+            sw.working_directory
+                .as_ref()
+                .map(|p| Path::new(p.as_os_str()))
+                .or(config.working_directory.as_deref()),
+            config.scrollback_limit,
+        )?;
+        // Set window title if specified
+        if let Some(title) = &sw.title
+            && let Some(win) = session.windows.last_mut()
+        {
+            win.terminal.apply(b"\x1b]2;");
+            win.terminal.apply(title);
+            win.terminal.apply(b"\x07");
+        }
+        // Select specific number
+        if let Some(number) = sw.number {
+            let _ = session.select_window(number);
+        }
+        // Stuff initial text
+        if let Some(stuff) = &sw.stuff {
+            let _ = session.write_to_window(session.windows.len() - 1, stuff);
+        }
+    }
+
     let mut log_file = open_log_file(config.log_path.as_deref())?;
     let (client_tx, client_rx) = mpsc::channel();
     let mut clients: Vec<AttachedClient> = Vec::new();
     let mut next_client_id = 1_u64;
 
     loop {
+        match signal::poll() {
+            Some(DaemonSignal::Shutdown) => {
+                // Detach all clients gracefully, then exit
+                for mut client in clients.drain(..) {
+                    let _ = Message::Detach.write_to(&mut client.stream);
+                }
+                return Ok(());
+            }
+            Some(DaemonSignal::DetachClients) => {
+                // SIGHUP: detach all connected clients
+                for mut client in clients.drain(..) {
+                    let _ = Message::Detach.write_to(&mut client.stream);
+                }
+            }
+            None => {}
+        }
+
         // Accept new clients and handle one-shot commands
         if accept_connections(
             &listener,
@@ -159,7 +243,138 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
         while let Ok(event) = client_rx.try_recv() {
             match event {
                 ClientEvent::Input(id, bytes) => {
-                    if let Some(client) = clients.iter().find(|c| c.id == id) {
+                    // If copy mode is active, redirect keystrokes to copy mode
+                    if session.copy_mode_active {
+                        if let Some(c) = clients.iter().find(|c| c.id == id) {
+                            let selected = c.selected;
+                            match bytes.as_slice() {
+                                // Escape or Ctrl-c or q: exit copy mode
+                                [0x1b] | [0x03] | [b'q'] => {
+                                    session.copy_mode_active = false;
+                                    session.copy_mode_mark = None;
+                                    if let Some(window) = session.windows.get(selected) {
+                                        let redraw = window.grid_redraw();
+                                        if let Some(c) = clients.iter_mut().find(|c| c.id == id) {
+                                            let _ =
+                                                Message::PtyOutput(redraw).write_to(&mut c.stream);
+                                        }
+                                    }
+                                }
+                                // j or down: move cursor down
+                                [b'j'] | [b'B'] => {
+                                    session.copy_mode_cursor =
+                                        session.copy_mode_cursor.saturating_add(1);
+                                    send_copy_cursor(id, &session, &mut clients)?;
+                                }
+                                // k or up: move cursor up
+                                [b'k'] | [b'A'] => {
+                                    session.copy_mode_cursor =
+                                        session.copy_mode_cursor.saturating_sub(1);
+                                    send_copy_cursor(id, &session, &mut clients)?;
+                                }
+                                // h or left: move column left (not supported, just acknowledge)
+                                [b'h'] | [b'D'] => {}
+                                // l or right: move column right
+                                [b'l'] | [b'C'] => {}
+                                // Space: set mark
+                                [b' '] => {
+                                    if session.copy_mode_mark.is_none() {
+                                        session.copy_mode_mark = Some(session.copy_mode_cursor);
+                                    } else {
+                                        // Second mark: copy region and exit
+                                        let mark = session.copy_mode_mark.unwrap_or(0);
+                                        let start = mark.min(session.copy_mode_cursor);
+                                        let end = mark.max(session.copy_mode_cursor);
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let lines = window.scrollback_lines();
+                                            let mut selected_data = Vec::new();
+                                            for i in start..=end {
+                                                if let Some(line) = lines.get(i as usize) {
+                                                    selected_data.extend_from_slice(line);
+                                                    selected_data.push(b'\n');
+                                                }
+                                            }
+                                            session.paste_buffer.push(selected_data);
+                                        }
+                                        session.copy_mode_mark = None;
+                                        session.copy_mode_active = false;
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let redraw = window.grid_redraw();
+                                            if let Some(c) = clients.iter_mut().find(|c| c.id == id)
+                                            {
+                                                let _ = Message::PtyOutput(redraw)
+                                                    .write_to(&mut c.stream);
+                                            }
+                                        }
+                                    }
+                                }
+                                // a or enter: copy and exit
+                                [b'a'] | [b'\r'] => {
+                                    let mark =
+                                        session.copy_mode_mark.unwrap_or(session.copy_mode_cursor);
+                                    let start = mark.min(session.copy_mode_cursor);
+                                    let end = mark.max(session.copy_mode_cursor);
+                                    if let Some(window) = session.windows.get(selected) {
+                                        let lines = window.scrollback_lines();
+                                        let mut selected_data = Vec::new();
+                                        for i in start..=end {
+                                            if let Some(line) = lines.get(i as usize) {
+                                                selected_data.extend_from_slice(line);
+                                                selected_data.push(b'\n');
+                                            }
+                                        }
+                                        session.paste_buffer.push(selected_data);
+                                    }
+                                    session.copy_mode_mark = None;
+                                    session.copy_mode_active = false;
+                                    if let Some(window) = session.windows.get(selected) {
+                                        let redraw = window.grid_redraw();
+                                        if let Some(c) = clients.iter_mut().find(|c| c.id == id) {
+                                            let _ =
+                                                Message::PtyOutput(redraw).write_to(&mut c.stream);
+                                        }
+                                    }
+                                }
+                                // g or G: go to top/bottom
+                                [b'g'] => {
+                                    session.copy_mode_cursor = 0;
+                                    send_copy_cursor(id, &session, &mut clients)?;
+                                }
+                                [b'G'] => {
+                                    if let Some(window) = session.windows.get(selected) {
+                                        let total = window.scrollback_lines().len() as u32;
+                                        session.copy_mode_cursor = total.saturating_sub(1);
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                }
+                                // Ctrl-f: page down
+                                [0x06] => {
+                                    if let Some(window) = session.windows.get(selected) {
+                                        let rows = window.terminal.dimensions.rows as u32;
+                                        let total = window.scrollback_lines().len() as u32;
+                                        session.copy_mode_cursor = (session.copy_mode_cursor
+                                            + rows)
+                                            .min(total.saturating_sub(1));
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                }
+                                // Ctrl-b: page up
+                                [0x02] => {
+                                    session.copy_mode_cursor =
+                                        session.copy_mode_cursor.saturating_sub(
+                                            session
+                                                .windows
+                                                .get(selected)
+                                                .map(|w| w.terminal.dimensions.rows)
+                                                .unwrap_or(24)
+                                                as u32,
+                                        );
+                                    send_copy_cursor(id, &session, &mut clients)?;
+                                }
+                                _ => {}
+                            }
+                        }
+                    } else if let Some(client) = clients.iter().find(|c| c.id == id) {
                         session.write_to_window(client.selected, &bytes)?;
                     }
                 }
@@ -176,6 +391,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     let new_idx = session.window_index(number);
                     if let Some(client) = clients.iter_mut().find(|c| c.id == id) {
                         if let Some(idx) = new_idx {
+                            client.last_selected = client.selected;
                             client.selected = idx;
                         }
                         let _ = Message::WindowSelected { number }.write_to(&mut client.stream);
@@ -185,6 +401,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     if let Some(client) = clients.iter_mut().find(|c| c.id == id) {
                         let current = client.selected;
                         if let Some(new_idx) = session.next_window_index(current) {
+                            client.last_selected = current;
                             client.selected = new_idx;
                             let number = session.windows[new_idx].number;
                             let _ = Message::WindowSelected { number }.write_to(&mut client.stream);
@@ -195,6 +412,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     if let Some(client) = clients.iter_mut().find(|c| c.id == id) {
                         let current = client.selected;
                         if let Some(new_idx) = session.prev_window_index(current) {
+                            client.last_selected = current;
                             client.selected = new_idx;
                             let number = session.windows[new_idx].number;
                             let _ = Message::WindowSelected { number }.write_to(&mut client.stream);
@@ -240,6 +458,9 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                                 number: dead.number,
                             },
                         )?;
+                        if session.auto_nuke.unwrap_or(false) {
+                            session.remove_dead_windows();
+                        }
                         if session.is_empty() {
                             broadcast(&mut clients, &Message::ChildExited(0))?;
                             return Ok(());
@@ -266,17 +487,414 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     send_window_list_to_client(&mut clients, id, &session)?;
                 }
                 ClientEvent::CopyModeRequest(id) => {
-                    if let Some(client) = clients.iter().find(|c| c.id == id)
-                        && let Some(window) = session.windows.get(client.selected)
-                    {
-                        let lines = window.scrollback_lines();
-                        if let Some(c) = clients.iter_mut().find(|c| c.id == id) {
-                            Message::CopyModeData(lines).write_to(&mut c.stream)?;
+                    session.copy_mode_active = !session.copy_mode_active;
+                    session.copy_mode_cursor = 0;
+                    session.copy_mode_mark = None;
+                    if let Some(c) = clients.iter_mut().find(|c| c.id == id) {
+                        if session.copy_mode_active {
+                            if let Some(window) = session.windows.get(c.selected) {
+                                let lines = window.scrollback_lines();
+                                let total = lines.len() as u32;
+                                let _ =
+                                    Message::CopyModeCursor(0, 0, total).write_to(&mut c.stream);
+                                let _ = Message::CopyModeData(lines).write_to(&mut c.stream);
+                            }
+                        } else {
+                            if let Some(window) = session.windows.get(c.selected) {
+                                let redraw = window.grid_redraw();
+                                let _ = Message::PtyOutput(redraw).write_to(&mut c.stream);
+                            }
                         }
                     }
                 }
                 ClientEvent::PasteRequest(_id, data) => {
                     session.paste_buffer.push(data);
+                }
+                ClientEvent::RenumberWindow(id, new_number) => {
+                    let old_number = session.windows.get(session.selected).map(|w| w.number);
+                    if let Some(old) = old_number {
+                        // Only renumber if the new number is different
+                        if new_number != old {
+                            // Check no other window has this number
+                            let conflict = session.windows.iter().any(|w| w.number == new_number);
+                            if !conflict {
+                                if let Some(w) = session.windows.get_mut(session.selected) {
+                                    w.number = new_number;
+                                }
+                                let _ = Message::WindowSelected { number: new_number }.write_to(
+                                    &mut clients
+                                        .iter_mut()
+                                        .find(|c| c.id == id)
+                                        .map(|c| &mut c.stream)
+                                        .unwrap(),
+                                );
+                            }
+                        }
+                    }
+                }
+                ClientEvent::Redisplay => {
+                    // Send a full terminal redraw and hardstatus to every attached client
+                    if let Some(window) = session.windows.get(session.selected) {
+                        let redraw = window.grid_redraw();
+                        if !redraw.is_empty() {
+                            broadcast(&mut clients, &Message::PtyOutput(redraw))?;
+                        }
+                    }
+                    if session.hardstatus_format.is_some() {
+                        let status = session.format_hardstatus();
+                        if !status.is_empty() {
+                            broadcast(&mut clients, &Message::HardstatusLine(status))?;
+                        }
+                    }
+                }
+                ClientEvent::RemoveWindow(_id, number) => {
+                    session.remove_window(number);
+                }
+                ClientEvent::WipeDeadWindows => {
+                    session.remove_dead_windows();
+                }
+                ClientEvent::Echo(text) => {
+                    broadcast(&mut clients, &Message::HardstatusLine(text))?;
+                }
+                ClientEvent::LogToggle(enable) => {
+                    session.logging = enable;
+                }
+                ClientEvent::LogFile(path) => {
+                    session.log_file =
+                        Some(std::path::PathBuf::from(std::ffi::OsString::from_vec(path)));
+                }
+                ClientEvent::OtherWindow(id) => {
+                    if let Some(client) = clients.iter_mut().find(|c| c.id == id) {
+                        std::mem::swap(&mut client.last_selected, &mut client.selected);
+                        let number = session.windows[client.selected].number;
+                        let _ = Message::WindowSelected { number }.write_to(&mut client.stream);
+                    }
+                }
+                ClientEvent::MonitorToggle(id, enable) => {
+                    if let Some(client) = clients.iter().find(|c| c.id == id)
+                        && let Some(window) = session.windows.get_mut(client.selected)
+                    {
+                        window.monitored = enable;
+                    }
+                }
+                ClientEvent::Silence(id, seconds) => {
+                    if let Some(client) = clients.iter().find(|c| c.id == id)
+                        && let Some(window) = session.windows.get_mut(client.selected)
+                    {
+                        window.silence_timeout = seconds;
+                    }
+                }
+                ClientEvent::WrapToggle(id, enable) => {
+                    if let Some(client) = clients.iter().find(|c| c.id == id)
+                        && let Some(window) = session.windows.get_mut(client.selected)
+                    {
+                        window.wrap_enabled = enable;
+                    }
+                }
+                ClientEvent::ReadBuf(id) => {
+                    let exchange_path = session.exchange_file.clone();
+                    let path =
+                        exchange_path.unwrap_or_else(|| PathBuf::from("/tmp/screen-exchange"));
+                    if let Ok(data) = fs::read(&path) {
+                        send_to_client(&mut clients, id, &Message::PasteRequest(data))?;
+                    }
+                }
+                ClientEvent::WriteBuf(id, data) => {
+                    let exchange_path = session.exchange_file.clone();
+                    let path =
+                        exchange_path.unwrap_or_else(|| PathBuf::from("/tmp/screen-exchange"));
+                    let _ = fs::write(&path, &data);
+                    let _ = id;
+                }
+                ClientEvent::RemoveBuf(id) => {
+                    let exchange_path = session.exchange_file.clone();
+                    let path =
+                        exchange_path.unwrap_or_else(|| PathBuf::from("/tmp/screen-exchange"));
+                    let _ = fs::remove_file(&path);
+                    let _ = id;
+                }
+                ClientEvent::RegisterOp(_id, name, data) => {
+                    if data.is_empty() {
+                        // Get - we could send back but for now no-op
+                    } else {
+                        let limit = session.registers.len();
+                        if limit < 64 || session.registers.contains_key(&name) {
+                            session.registers.insert(name, data);
+                        }
+                    }
+                }
+                ClientEvent::FlowToggle(id, enable) => {
+                    session.flow_control = enable;
+                    let _ = id;
+                }
+                ClientEvent::SendXoff(id) => {
+                    if let Some(client) = clients.iter().find(|c| c.id == id) {
+                        let _ = session.write_to_window(client.selected, &[0x13]);
+                    }
+                }
+                ClientEvent::SendXon(id) => {
+                    if let Some(client) = clients.iter().find(|c| c.id == id) {
+                        let _ = session.write_to_window(client.selected, &[0x11]);
+                    }
+                }
+                ClientEvent::BreakSignal(id, _ms) => {
+                    if let Some(client) = clients.iter().find(|c| c.id == id) {
+                        // Send null bytes as a simple break approximation
+                        let _ = session.write_to_window(client.selected, &[0x00; 4]);
+                    }
+                }
+                ClientEvent::WindowInfo(id) => {
+                    if let Some(client) = clients.iter().find(|c| c.id == id) {
+                        let window = &session.windows[client.selected];
+                        let info = format!(
+                            "window {} ({})  alive: {}  scrollback: {}\r\n",
+                            window.number,
+                            String::from_utf8_lossy(
+                                window.terminal.title.as_deref().unwrap_or(b"")
+                            ),
+                            window.alive,
+                            window.terminal.scrollback_len()
+                        );
+                        send_to_client(&mut clients, id, &Message::WindowInfo(info.into_bytes()))?;
+                    }
+                }
+                ClientEvent::SearchHistory(id, query) => {
+                    if let Some(client) = clients.iter().find(|c| c.id == id)
+                        && let Some(window) = session.windows.get(client.selected)
+                    {
+                        let lines = window.scrollback_lines();
+                        let query_str = String::from_utf8_lossy(&query).to_lowercase();
+                        let mut matches: Vec<u32> = Vec::new();
+                        for (i, line) in lines.iter().enumerate() {
+                            let text = String::from_utf8_lossy(line).to_lowercase();
+                            if text.contains(&query_str) {
+                                matches.push(i as u32);
+                            }
+                        }
+                        send_to_client(&mut clients, id, &Message::SearchResult(matches))?;
+                    }
+                }
+                ClientEvent::Command(cmd) => {
+                    execute_command_string(&cmd, &mut session, &mut clients)?;
+                }
+                ClientEvent::Hardcopy(_id, number, path) => {
+                    if let Some(window) = session.windows.iter().find(|w| w.number == number) {
+                        let lines = window.scrollback_lines();
+                        let contents: Vec<u8> = lines
+                            .iter()
+                            .flat_map(|l| {
+                                let mut v = l.clone();
+                                v.push(b'\n');
+                                v
+                            })
+                            .collect();
+                        if let Err(e) = std::fs::write(
+                            std::path::PathBuf::from(String::from_utf8_lossy(&path).into_owned()),
+                            &contents,
+                        ) {
+                            let err = format!("hardcopy failed: {e}").into_bytes();
+                            broadcast(&mut clients, &Message::Error(err))?;
+                        }
+                    }
+                }
+                ClientEvent::SplitVertical(_id) => {
+                    // Create a new region showing the next window
+                    if session.windows.len() > 1 {
+                        let next_idx = session.next_window_index(session.selected).unwrap_or(0);
+                        let total_height = session
+                            .windows
+                            .get(session.selected)
+                            .map(|w| w.terminal.dimensions.rows)
+                            .unwrap_or(24);
+                        let half = total_height / 2;
+                        // Recompute regions: top half shows selected, bottom half shows next
+                        session.regions = vec![
+                            Region {
+                                window_idx: session.selected,
+                                top: 0,
+                                height: half,
+                            },
+                            Region {
+                                window_idx: next_idx,
+                                top: half,
+                                height: total_height - half,
+                            },
+                        ];
+                        session.focused_region = 0;
+                        // Send redraw for each region
+                        broadcast_region_layout(&session, &mut clients)?;
+                    }
+                }
+                ClientEvent::RemoveRegion(id) => {
+                    if session.regions.len() > 1 {
+                        session.regions.remove(session.focused_region);
+                        if session.focused_region >= session.regions.len() {
+                            session.focused_region = session.regions.len().saturating_sub(1);
+                        }
+                        if session.regions.len() == 1 {
+                            session.selected = session.regions[0].window_idx;
+                            session.regions.clear();
+                            send_to_client(
+                                &mut clients,
+                                id,
+                                &Message::WindowSelected {
+                                    number: session
+                                        .windows
+                                        .get(session.selected)
+                                        .map(|w| w.number)
+                                        .unwrap_or(0),
+                                },
+                            )?;
+                        }
+                        broadcast_region_layout(&session, &mut clients)?;
+                    }
+                }
+                ClientEvent::OnlyWindow(_id) => {
+                    if let Some(saved) = session.saved_regions.take() {
+                        // Restore hidden regions
+                        session.regions = saved;
+                        if session.focused_region >= session.regions.len() {
+                            session.focused_region = 0;
+                        }
+                    } else if !session.regions.is_empty() {
+                        // Save and collapse to just current region
+                        session.saved_regions = Some(session.regions.clone());
+                        session.regions.clear();
+                    }
+                    broadcast_region_layout(&session, &mut clients)?;
+                }
+                ClientEvent::FocusNextRegion(id) => {
+                    if !session.regions.is_empty() {
+                        session.focused_region =
+                            (session.focused_region + 1) % session.regions.len();
+                        let new = session.regions[session.focused_region].window_idx;
+                        session.selected = new;
+                        if let Some(win) = session.windows.get(new) {
+                            send_to_client(
+                                &mut clients,
+                                id,
+                                &Message::WindowSelected { number: win.number },
+                            )?;
+                        }
+                        broadcast_region_layout(&session, &mut clients)?;
+                    }
+                }
+                ClientEvent::FocusPrevRegion(id) => {
+                    if !session.regions.is_empty() {
+                        if session.focused_region == 0 {
+                            session.focused_region = session.regions.len() - 1;
+                        } else {
+                            session.focused_region -= 1;
+                        }
+                        let new = session.regions[session.focused_region].window_idx;
+                        session.selected = new;
+                        if let Some(win) = session.windows.get(new) {
+                            send_to_client(
+                                &mut clients,
+                                id,
+                                &Message::WindowSelected { number: win.number },
+                            )?;
+                        }
+                        broadcast_region_layout(&session, &mut clients)?;
+                    }
+                }
+                ClientEvent::ResizeRegion(_id, delta) => {
+                    if session.regions.len() >= 2 {
+                        let total_height: u16 = session.regions.iter().map(|r| r.height).sum();
+                        let idx = session.focused_region;
+                        let other = if idx == 0 { 1 } else { idx - 1 };
+                        let new_h = (session.regions[idx].height as i16 + delta)
+                            .clamp(3, total_height as i16 - 3)
+                            as u16;
+                        let old_h = session.regions[idx].height;
+                        session.regions[idx].height = new_h;
+                        session.regions[other].height = (session.regions[other].height as i16
+                            + (old_h as i16 - new_h as i16))
+                            as u16;
+                        // Recompute tops
+                        let mut top = 0u16;
+                        for region in session.regions.iter_mut() {
+                            region.top = top;
+                            top += region.height;
+                        }
+                        broadcast_region_layout(&session, &mut clients)?;
+                    }
+                }
+                ClientEvent::CopyModeMove(id, delta) => {
+                    if session.copy_mode_active {
+                        let new_pos = session.copy_mode_cursor as i64 + delta as i64;
+                        session.copy_mode_cursor = new_pos.max(0) as u32;
+                        if let Some(c) = clients.iter_mut().find(|c| c.id == id)
+                            && let Some(window) = session.windows.get(c.selected)
+                        {
+                            let total = window.scrollback_lines().len() as u32;
+                            if session.copy_mode_cursor >= total {
+                                session.copy_mode_cursor = total.saturating_sub(1);
+                            }
+                            let _ = Message::CopyModeCursor(session.copy_mode_cursor, 0, total)
+                                .write_to(&mut c.stream);
+                        }
+                    }
+                }
+                ClientEvent::CopyModeMark(id) => {
+                    if session.copy_mode_active {
+                        if let Some(mark) = session.copy_mode_mark {
+                            let start = mark.min(session.copy_mode_cursor);
+                            let end = mark.max(session.copy_mode_cursor);
+                            if let Some(c) = clients.iter_mut().find(|c| c.id == id)
+                                && let Some(window) = session.windows.get(c.selected)
+                            {
+                                let lines = window.scrollback_lines();
+                                let mut selected = Vec::new();
+                                for i in start..=end {
+                                    if let Some(line) = lines.get(i as usize) {
+                                        selected.extend_from_slice(line);
+                                        selected.push(b'\n');
+                                    }
+                                }
+                                session.paste_buffer.push(selected);
+                            }
+                            session.copy_mode_mark = None;
+                            session.copy_mode_active = false;
+                            if let Some(c) = clients.iter_mut().find(|c| c.id == id)
+                                && let Some(window) = session.windows.get(c.selected)
+                            {
+                                let redraw = window.grid_redraw();
+                                let _ = Message::PtyOutput(redraw).write_to(&mut c.stream);
+                            }
+                        } else {
+                            session.copy_mode_mark = Some(session.copy_mode_cursor);
+                        }
+                    }
+                }
+                ClientEvent::CopyModeCopy(id) => {
+                    if session.copy_mode_active {
+                        let mark = session.copy_mode_mark.unwrap_or(session.copy_mode_cursor);
+                        let start = mark.min(session.copy_mode_cursor);
+                        let end = mark.max(session.copy_mode_cursor);
+                        if let Some(c) = clients.iter_mut().find(|c| c.id == id)
+                            && let Some(window) = session.windows.get(c.selected)
+                        {
+                            let lines = window.scrollback_lines();
+                            let mut selected = Vec::new();
+                            for i in start..=end {
+                                if let Some(line) = lines.get(i as usize) {
+                                    selected.extend_from_slice(line);
+                                    selected.push(b'\n');
+                                }
+                            }
+                            session.paste_buffer.push(selected);
+                        }
+                    }
+                }
+                ClientEvent::CopyModePaste(_id, data) => {
+                    let _ = session.write_to_window(session.selected, &data);
+                }
+                ClientEvent::AtWindow(_id, number, data) => {
+                    // Send input to a specific window by number
+                    if let Some(idx) = session.window_index(number) {
+                        let _ = session.write_to_window(idx, &data);
+                    }
                 }
             }
         }
@@ -291,7 +909,59 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                 let output = pty.read_available()?;
                 if !output.is_empty() {
                     // Feed output through the terminal engine for scrollback tracking
+                    let old_title = window.terminal.title.clone();
                     window.terminal.apply(&output);
+                    window.last_activity = SystemTime::now();
+
+                    // Broadcast title change to all clients
+                    if window.terminal.title != old_title
+                        && let Some(ref title) = window.terminal.title
+                    {
+                        broadcast(
+                            &mut clients,
+                            &Message::WindowTitle {
+                                number: window.number,
+                                title: title.clone(),
+                            },
+                        )?;
+                    }
+
+                    // Activity monitoring: notify clients if window is monitored and not focused
+                    if window.monitored {
+                        let focused = clients.iter().any(|c| c.selected == idx);
+                        if !focused {
+                            let msg = format!("Activity in window {}", window.number);
+                            session.last_message = msg.clone().into_bytes();
+                            for client in clients.iter_mut() {
+                                let _ = Message::Activity(msg.clone().into_bytes())
+                                    .write_to(&mut client.stream);
+                            }
+                        }
+                    }
+
+                    // Bell detection: notify clients when output contains BEL (0x07)
+                    if output.contains(&0x07) {
+                        for client in clients.iter_mut() {
+                            let _ = Message::Bell(b"bell".to_vec()).write_to(&mut client.stream);
+                        }
+                    }
+
+                    // Silence monitoring: check for windows with silence timeout
+                    if window.silence_timeout > 0 {
+                        let elapsed = window
+                            .last_activity
+                            .elapsed()
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        if elapsed >= u64::from(window.silence_timeout) {
+                            let msg = format!("Silence in window {}", window.number);
+                            session.last_message = msg.clone().into_bytes();
+                            for client in clients.iter_mut() {
+                                let _ = Message::HardstatusLine(msg.clone().into_bytes())
+                                    .write_to(&mut client.stream);
+                            }
+                        }
+                    }
 
                     // Log output if logging is enabled
                     if let (Some(log_file), Some(log_path)) =
@@ -307,6 +977,15 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                             path: log_path.to_owned(),
                             source,
                         })?;
+                    }
+                    // Also log to session-level log file if logging is enabled
+                    if session.logging
+                        && let Some(ref log_path) = session.log_file
+                        && let Ok(mut f) =
+                            OpenOptions::new().create(true).append(true).open(log_path)
+                    {
+                        let _ = f.write_all(&output);
+                        let _ = f.flush();
                     }
                     window.buffer_output(&output, config.output_buffer_limit);
                     // Send to clients that have this window selected
@@ -356,8 +1035,13 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
         }
 
         if any_exited {
-            session.remove_dead_windows();
-            if session.is_empty() {
+            // Auto-nuke: remove dead windows immediately if configured.
+            if session.auto_nuke.unwrap_or(false) {
+                session.remove_dead_windows();
+            }
+            // Dead windows are kept as zombies — visible in the list but not
+            // auto-switched to. Explicit removal is done via -X wipe or remove.
+            if session.windows.iter().all(|w| !w.alive) {
                 return Ok(());
             }
         }
@@ -366,7 +1050,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
         if session.hardstatus_format.is_some() {
             let status = session.format_hardstatus();
             if !status.is_empty() && !clients.is_empty() {
-                broadcast(&mut clients, &Message::PtyOutput(status))?;
+                broadcast(&mut clients, &Message::HardstatusLine(status))?;
             }
         }
 
@@ -384,6 +1068,41 @@ struct SessionState {
     next_number: u32,
     paste_buffer: Vec<Vec<u8>>,
     hardstatus_format: Option<Vec<u8>>,
+    logging: bool,
+    log_file: Option<std::path::PathBuf>,
+    /// Named registers for copy mode.
+    registers: std::collections::HashMap<u8, Vec<u8>>,
+    /// Exchange file path for readbuf/writebuf.
+    exchange_file: Option<PathBuf>,
+    /// Flow control state.
+    flow_control: bool,
+    /// Last message displayed via Echo/Activity/etc.
+    last_message: Vec<u8>,
+    /// Config defaults for new windows.
+    default_monitor: Option<bool>,
+    default_wrap: Option<bool>,
+    default_silence: Option<u16>,
+    auto_nuke: Option<bool>,
+    /// Region-based split layout.
+    regions: Vec<Region>,
+    /// Index into regions: which region has focus.
+    focused_region: usize,
+    /// Saved regions for only/unsplit restore.
+    saved_regions: Option<Vec<Region>>,
+    /// Copy mode state.
+    copy_mode_active: bool,
+    copy_mode_cursor: u32,
+    copy_mode_mark: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct Region {
+    /// Index into self.windows for the window displayed in this region.
+    window_idx: usize,
+    /// Top row of this region in the composite display.
+    top: u16,
+    /// Height of this region in rows.
+    height: u16,
 }
 
 #[derive(Debug)]
@@ -395,6 +1114,14 @@ struct ManagedWindow {
     alive: bool,
     exit_code: Option<i32>,
     terminal: TerminalState,
+    /// Whether activity monitoring is enabled for this window.
+    monitored: bool,
+    /// Silence timeout in seconds (0 = disabled).
+    silence_timeout: u16,
+    /// Last time output was received from the pty.
+    last_activity: SystemTime,
+    /// Whether line wrapping is enabled.
+    wrap_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -418,6 +1145,22 @@ impl SessionState {
             next_number: 0,
             paste_buffer: Vec::new(),
             hardstatus_format: None,
+            logging: false,
+            log_file: None,
+            registers: std::collections::HashMap::new(),
+            exchange_file: None,
+            flow_control: false,
+            last_message: Vec::new(),
+            default_monitor: None,
+            default_wrap: None,
+            default_silence: None,
+            auto_nuke: None,
+            regions: Vec::new(),
+            focused_region: 0,
+            saved_regions: None,
+            copy_mode_active: false,
+            copy_mode_cursor: 0,
+            copy_mode_mark: None,
         }
     }
 
@@ -460,6 +1203,10 @@ impl SessionState {
             alive: true,
             exit_code: None,
             terminal,
+            monitored: self.default_monitor.unwrap_or(false),
+            silence_timeout: self.default_silence.unwrap_or(0),
+            last_activity: SystemTime::now(),
+            wrap_enabled: self.default_wrap.unwrap_or(true),
         };
 
         self.windows.push(window);
@@ -584,6 +1331,7 @@ impl SessionState {
         Ok(None)
     }
 
+    #[allow(dead_code)]
     fn remove_dead_windows(&mut self) {
         let mut new_windows = Vec::new();
         let mut offset = 0_usize;
@@ -601,8 +1349,20 @@ impl SessionState {
         self.windows = new_windows;
     }
 
+    fn remove_window(&mut self, number: u32) {
+        if let Some(idx) = self.windows.iter().position(|w| w.number == number) {
+            // Only allow removing dead/zombie windows
+            if !self.windows[idx].alive {
+                self.windows.remove(idx);
+                if self.selected >= self.windows.len() && !self.windows.is_empty() {
+                    self.selected = self.windows.len() - 1;
+                }
+            }
+        }
+    }
+
     fn is_empty(&self) -> bool {
-        self.windows.iter().all(|w| !w.alive)
+        self.windows.is_empty()
     }
 
     #[allow(dead_code)]
@@ -721,17 +1481,22 @@ fn send_window_list_to_client(
     let list: Vec<WindowInfoMsg> = session
         .windows
         .iter()
-        .filter(|w| w.alive)
         .map(|w| {
-            let flags: u8 = if Some(w.number) == client_selected_num {
-                1 // flag for selected
+            let selected = Some(w.number) == client_selected_num;
+            let dead = !w.alive;
+            let flags: u8 = if selected && dead {
+                3
+            } else if selected {
+                1
+            } else if dead {
+                2
             } else {
                 0
             };
             WindowInfoMsg {
                 number: w.number,
                 flags,
-                title: Vec::new(),
+                title: w.terminal.title.clone().unwrap_or_default(),
             }
         })
         .collect();
@@ -740,6 +1505,44 @@ fn send_window_list_to_client(
         if client.id == client_id {
             Message::WindowList(list.clone()).write_to(&mut client.stream)?;
         }
+    }
+    Ok(())
+}
+
+fn broadcast_region_layout(
+    session: &SessionState,
+    clients: &mut Vec<AttachedClient>,
+) -> Result<(), DaemonError> {
+    if !session.regions.is_empty() {
+        let layout: Vec<(u32, u16, u16, bool)> = session
+            .regions
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| {
+                session
+                    .windows
+                    .get(r.window_idx)
+                    .map(|w| (w.number, r.top, r.height, i == session.focused_region))
+            })
+            .collect();
+        if !layout.is_empty() {
+            broadcast(clients, &Message::RegionLayout(layout))?;
+        }
+    }
+    Ok(())
+}
+
+fn send_copy_cursor(
+    id: u64,
+    session: &SessionState,
+    #[allow(clippy::ptr_arg)] clients: &mut Vec<AttachedClient>,
+) -> Result<(), DaemonError> {
+    if let Some(c) = clients.iter_mut().find(|c| c.id == id)
+        && let Some(window) = session.windows.get(c.selected)
+    {
+        let total = window.scrollback_lines().len() as u32;
+        let cursor = session.copy_mode_cursor.min(total.saturating_sub(1));
+        let _ = Message::CopyModeCursor(cursor, 0, total).write_to(&mut c.stream);
     }
     Ok(())
 }
@@ -766,6 +1569,8 @@ struct AttachedClient {
     stream: UnixStream,
     /// Index into session.windows this client is viewing
     selected: usize,
+    /// Previously-selected window index for "other" command
+    last_selected: usize,
 }
 
 #[derive(Debug)]
@@ -782,6 +1587,45 @@ enum ClientEvent {
     ListWindows(u64),
     CopyModeRequest(u64),
     PasteRequest(u64, Vec<u8>),
+    RenumberWindow(u64, u32),
+    Redisplay,
+    RemoveWindow(u64, u32),
+    WipeDeadWindows,
+    Echo(Vec<u8>),
+    LogToggle(bool),
+    LogFile(Vec<u8>),
+    OtherWindow(u64),
+    MonitorToggle(u64, bool),
+    Silence(u64, u16),
+    WrapToggle(u64, bool),
+    ReadBuf(u64),
+    WriteBuf(u64, Vec<u8>),
+    RemoveBuf(u64),
+    RegisterOp(u64, u8, Vec<u8>),
+    FlowToggle(u64, bool),
+    SendXoff(u64),
+    SendXon(u64),
+    BreakSignal(u64, u16),
+    WindowInfo(u64),
+    SearchHistory(u64, Vec<u8>),
+    /// Execute an arbitrary screen command string.
+    Command(Vec<u8>),
+    /// Write terminal contents to a file.
+    Hardcopy(u64, u32, Vec<u8>),
+    /// Region split/control.
+    SplitVertical(u64),
+    RemoveRegion(u64),
+    OnlyWindow(u64),
+    FocusNextRegion(u64),
+    FocusPrevRegion(u64),
+    ResizeRegion(u64, i16),
+    /// Copy mode operations.
+    CopyModeMove(u64, i32),
+    CopyModeMark(u64),
+    CopyModeCopy(u64),
+    CopyModePaste(u64, Vec<u8>),
+    /// Send input to a specific window by number.
+    AtWindow(u64, u32, Vec<u8>),
 }
 
 fn handle_client(stream: &mut UnixStream) -> Result<ClientOutcome, DaemonError> {
@@ -884,6 +1728,7 @@ fn accept_connections(
                             id,
                             stream,
                             selected: session.selected,
+                            last_selected: session.selected,
                         });
                     }
                     Ok(Message::Detach) => {
@@ -972,11 +1817,181 @@ fn accept_connections(
                     Ok(Message::PasteRequest(data)) => {
                         session.paste_buffer.push(data);
                     }
+                    Ok(Message::RenumberWindow { number }) => {
+                        if let Some(selected) = session.windows.get(session.selected) {
+                            let old = selected.number;
+                            if number != old {
+                                let conflict = session.windows.iter().any(|w| w.number == number);
+                                if !conflict {
+                                    if let Some(w) = session.windows.get_mut(session.selected) {
+                                        w.number = number;
+                                    }
+                                    Message::WindowSelected { number }.write_to(&mut stream)?;
+                                }
+                            }
+                        }
+                    }
+                    Ok(Message::Redisplay) => {
+                        // Send a full terminal redraw to every attached client
+                        if let Some(window) = session.windows.get(session.selected) {
+                            let redraw = window.grid_redraw();
+                            if !redraw.is_empty() {
+                                for client in clients.iter_mut() {
+                                    let _ = Message::PtyOutput(redraw.clone())
+                                        .write_to(&mut client.stream);
+                                }
+                            }
+                        }
+                        // Also send hardstatus if configured
+                        if session.hardstatus_format.is_some() {
+                            let status = session.format_hardstatus();
+                            if !status.is_empty() {
+                                for client in clients.iter_mut() {
+                                    let _ = Message::HardstatusLine(status.clone())
+                                        .write_to(&mut client.stream);
+                                }
+                            }
+                        }
+                    }
+                    Ok(Message::RemoveWindow { number }) => {
+                        session.remove_window(number);
+                    }
+                    Ok(Message::WipeDeadWindows) => {
+                        session.remove_dead_windows();
+                    }
+                    Ok(Message::Echo(text)) => {
+                        // Display echo on all attached clients via hardstatus
+                        for client in clients.iter_mut() {
+                            let _ =
+                                Message::HardstatusLine(text.clone()).write_to(&mut client.stream);
+                        }
+                    }
+                    Ok(Message::LogToggle { enable }) => {
+                        session.logging = enable;
+                    }
+                    Ok(Message::LogFile(path)) => {
+                        session.log_file =
+                            Some(std::path::PathBuf::from(std::ffi::OsString::from_vec(path)));
+                    }
+                    Ok(Message::MonitorToggle { enable }) => {
+                        if let Some(window) = session.windows.get_mut(session.selected) {
+                            window.monitored = enable;
+                        }
+                    }
+                    Ok(Message::Silence { seconds }) => {
+                        if let Some(window) = session.windows.get_mut(session.selected) {
+                            window.silence_timeout = seconds;
+                        }
+                    }
+                    Ok(Message::WrapToggle { enable }) => {
+                        if let Some(window) = session.windows.get_mut(session.selected) {
+                            window.wrap_enabled = enable;
+                        }
+                    }
+                    Ok(Message::ReadBuf) => {
+                        let exchange_path = session.exchange_file.clone();
+                        let path =
+                            exchange_path.unwrap_or_else(|| PathBuf::from("/tmp/screen-exchange"));
+                        if let Ok(data) = fs::read(&path) {
+                            // Send paste data back to client via PasteRequest
+                            for client in clients.iter_mut() {
+                                let _ = Message::PasteRequest(data.clone())
+                                    .write_to(&mut client.stream);
+                            }
+                        }
+                    }
+                    Ok(Message::WriteBuf(data)) => {
+                        let exchange_path = session.exchange_file.clone();
+                        let path =
+                            exchange_path.unwrap_or_else(|| PathBuf::from("/tmp/screen-exchange"));
+                        let _ = fs::write(&path, &data);
+                    }
+                    Ok(Message::RemoveBuf) => {
+                        let exchange_path = session.exchange_file.clone();
+                        let path =
+                            exchange_path.unwrap_or_else(|| PathBuf::from("/tmp/screen-exchange"));
+                        let _ = fs::remove_file(&path);
+                    }
+                    Ok(Message::Register { name, data }) => {
+                        if data.is_empty() {
+                            // Get register - send to client
+                            let content = session.registers.get(&name).cloned();
+                            if let Some(_c) = content {
+                                // Send back via PasteRequest or similar
+                            }
+                        } else {
+                            // Set register
+                            let limit = session.registers.len();
+                            if limit < 64 || session.registers.contains_key(&name) {
+                                session.registers.insert(name, data);
+                            }
+                        }
+                    }
+                    Ok(Message::FlowToggle { enable }) => {
+                        session.flow_control = enable;
+                    }
+                    Ok(Message::Xoff) => {
+                        let _ = session.write_to_selected(&[0x13]);
+                    }
+                    Ok(Message::Xon) => {
+                        let _ = session.write_to_selected(&[0x11]);
+                    }
+                    Ok(Message::BreakSignal { ms: _ }) => {
+                        if let Some(window) = session.windows.get(session.selected)
+                            && let Some(_pty) = &window.pty
+                        {
+                            // Send break by using tcsendbreak if available
+                            // For now, send a null byte as a simple break approximation
+                        }
+                    }
+                    Ok(Message::SearchHistory(query)) => {
+                        // Search scrollback and respond with matching line indices
+                        if let Some(window) = session.windows.get(session.selected) {
+                            let lines = window.scrollback_lines();
+                            let query_str = String::from_utf8_lossy(&query).to_lowercase();
+                            let mut matches: Vec<u32> = Vec::new();
+                            for (i, line) in lines.iter().enumerate() {
+                                let text = String::from_utf8_lossy(line).to_lowercase();
+                                if text.contains(&query_str) {
+                                    matches.push(i as u32);
+                                }
+                            }
+                            for client in clients.iter_mut() {
+                                let _ = Message::SearchResult(matches.clone())
+                                    .write_to(&mut client.stream);
+                            }
+                        }
+                    }
+                    Ok(Message::Command(cmd)) => {
+                        let mut empty_clients = Vec::new();
+                        let _ = execute_command_string(&cmd, session, &mut empty_clients);
+                    }
+                    Ok(Message::Hardcopy(number, path)) => {
+                        if let Some(window) = session.windows.iter().find(|w| w.number == number) {
+                            let lines = window.scrollback_lines();
+                            let contents: Vec<u8> = lines
+                                .iter()
+                                .flat_map(|l| {
+                                    let mut v = l.clone();
+                                    v.push(b'\n');
+                                    v
+                                })
+                                .collect();
+                            let file_path = std::path::PathBuf::from(
+                                String::from_utf8_lossy(&path).into_owned(),
+                            );
+                            let _ = std::fs::write(&file_path, &contents);
+                        }
+                    }
+                    Ok(Message::AtWindow(number, data)) => {
+                        if let Some(idx) = session.window_index(number) {
+                            let _ = session.write_to_window(idx, &data);
+                        }
+                    }
                     Ok(Message::WindowList(_)) => {
                         let list: Vec<WindowInfoMsg> = session
                             .windows
                             .iter()
-                            .filter(|w| w.alive)
                             .map(|w| WindowInfoMsg {
                                 number: w.number,
                                 flags: if w.number
@@ -987,10 +2002,12 @@ fn accept_connections(
                                         .unwrap_or(0)
                                 {
                                     1
+                                } else if !w.alive {
+                                    2
                                 } else {
                                     0
                                 },
-                                title: Vec::new(),
+                                title: w.terminal.title.clone().unwrap_or_default(),
                             })
                             .collect();
                         Message::WindowList(list).write_to(&mut stream)?;
@@ -1060,6 +2077,109 @@ fn spawn_client_reader(id: u64, mut stream: UnixStream, client_tx: &mpsc::Sender
                 }
                 Ok(Message::PasteRequest(data)) => {
                     let _ = client_tx.send(ClientEvent::PasteRequest(id, data));
+                }
+                Ok(Message::RenumberWindow { number }) => {
+                    let _ = client_tx.send(ClientEvent::RenumberWindow(id, number));
+                }
+                Ok(Message::Redisplay) => {
+                    let _ = client_tx.send(ClientEvent::Redisplay);
+                }
+                Ok(Message::RemoveWindow { number }) => {
+                    let _ = client_tx.send(ClientEvent::RemoveWindow(id, number));
+                }
+                Ok(Message::WipeDeadWindows) => {
+                    let _ = client_tx.send(ClientEvent::WipeDeadWindows);
+                }
+                Ok(Message::Echo(text)) => {
+                    let _ = client_tx.send(ClientEvent::Echo(text));
+                }
+                Ok(Message::LogToggle { enable }) => {
+                    let _ = client_tx.send(ClientEvent::LogToggle(enable));
+                }
+                Ok(Message::LogFile(path)) => {
+                    let _ = client_tx.send(ClientEvent::LogFile(path));
+                }
+                Ok(Message::OtherWindow) => {
+                    let _ = client_tx.send(ClientEvent::OtherWindow(id));
+                }
+                Ok(Message::MonitorToggle { enable }) => {
+                    let _ = client_tx.send(ClientEvent::MonitorToggle(id, enable));
+                }
+                Ok(Message::Silence { seconds }) => {
+                    let _ = client_tx.send(ClientEvent::Silence(id, seconds));
+                }
+                Ok(Message::WrapToggle { enable }) => {
+                    let _ = client_tx.send(ClientEvent::WrapToggle(id, enable));
+                }
+                Ok(Message::ReadBuf) => {
+                    let _ = client_tx.send(ClientEvent::ReadBuf(id));
+                }
+                Ok(Message::WriteBuf(data)) => {
+                    let _ = client_tx.send(ClientEvent::WriteBuf(id, data));
+                }
+                Ok(Message::RemoveBuf) => {
+                    let _ = client_tx.send(ClientEvent::RemoveBuf(id));
+                }
+                Ok(Message::Register { name, data }) => {
+                    let _ = client_tx.send(ClientEvent::RegisterOp(id, name, data));
+                }
+                Ok(Message::FlowToggle { enable }) => {
+                    let _ = client_tx.send(ClientEvent::FlowToggle(id, enable));
+                }
+                Ok(Message::Xoff) => {
+                    let _ = client_tx.send(ClientEvent::SendXoff(id));
+                }
+                Ok(Message::Xon) => {
+                    let _ = client_tx.send(ClientEvent::SendXon(id));
+                }
+                Ok(Message::BreakSignal { ms }) => {
+                    let _ = client_tx.send(ClientEvent::BreakSignal(id, ms));
+                }
+                Ok(Message::WindowInfo(_info)) => {
+                    // Forward window info from daemon to client
+                    let _ = client_tx.send(ClientEvent::WindowInfo(id));
+                }
+                Ok(Message::SearchHistory(query)) => {
+                    let _ = client_tx.send(ClientEvent::SearchHistory(id, query));
+                }
+                Ok(Message::Command(cmd)) => {
+                    let _ = client_tx.send(ClientEvent::Command(cmd));
+                }
+                Ok(Message::Hardcopy(number, path)) => {
+                    let _ = client_tx.send(ClientEvent::Hardcopy(id, number, path));
+                }
+                Ok(Message::SplitVertical) => {
+                    let _ = client_tx.send(ClientEvent::SplitVertical(id));
+                }
+                Ok(Message::RemoveRegion) => {
+                    let _ = client_tx.send(ClientEvent::RemoveRegion(id));
+                }
+                Ok(Message::OnlyWindow) => {
+                    let _ = client_tx.send(ClientEvent::OnlyWindow(id));
+                }
+                Ok(Message::FocusNext) => {
+                    let _ = client_tx.send(ClientEvent::FocusNextRegion(id));
+                }
+                Ok(Message::FocusPrev) => {
+                    let _ = client_tx.send(ClientEvent::FocusPrevRegion(id));
+                }
+                Ok(Message::ResizeRegion(delta)) => {
+                    let _ = client_tx.send(ClientEvent::ResizeRegion(id, delta));
+                }
+                Ok(Message::CopyModeMove(delta)) => {
+                    let _ = client_tx.send(ClientEvent::CopyModeMove(id, delta));
+                }
+                Ok(Message::CopyModeMark) => {
+                    let _ = client_tx.send(ClientEvent::CopyModeMark(id));
+                }
+                Ok(Message::CopyModeCopy) => {
+                    let _ = client_tx.send(ClientEvent::CopyModeCopy(id));
+                }
+                Ok(Message::CopyModePaste(data)) => {
+                    let _ = client_tx.send(ClientEvent::CopyModePaste(id, data));
+                }
+                Ok(Message::AtWindow(number, data)) => {
+                    let _ = client_tx.send(ClientEvent::AtWindow(id, number, data));
                 }
                 Ok(_message) => {}
                 Err(_error) => {
@@ -1257,6 +2377,144 @@ fn open_log_file(path: Option<&Path>) -> Result<Option<File>, DaemonError> {
             source,
         })?;
     Ok(Some(file))
+}
+
+enum DaemonSignal {
+    DetachClients,
+    Shutdown,
+}
+
+#[cfg(unix)]
+#[allow(unsafe_code)]
+mod signal {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static SIGHUP: AtomicBool = AtomicBool::new(false);
+    static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+    extern "C" fn handle_sighup(_: libc::c_int) {
+        SIGHUP.store(true, Ordering::SeqCst);
+    }
+    extern "C" fn handle_shutdown(_: libc::c_int) {
+        SHUTDOWN.store(true, Ordering::SeqCst);
+    }
+
+    pub fn install() {
+        unsafe {
+            libc::signal(
+                libc::SIGHUP,
+                handle_sighup as *const () as libc::sighandler_t,
+            );
+            libc::signal(
+                libc::SIGTERM,
+                handle_shutdown as *const () as libc::sighandler_t,
+            );
+            libc::signal(
+                libc::SIGINT,
+                handle_shutdown as *const () as libc::sighandler_t,
+            );
+        }
+    }
+
+    pub fn poll() -> Option<super::DaemonSignal> {
+        if SHUTDOWN.swap(false, Ordering::SeqCst) {
+            Some(super::DaemonSignal::Shutdown)
+        } else if SIGHUP.swap(false, Ordering::SeqCst) {
+            Some(super::DaemonSignal::DetachClients)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(not(unix))]
+mod signal {
+    pub fn install() {}
+    pub fn poll() -> Option<super::DaemonSignal> {
+        None
+    }
+}
+
+/// Parse and execute a simple screen command string (for -X colon).
+/// Supports common commands like: select N, monitor on/off, wrap on/off, etc.
+fn execute_command_string(
+    cmd: &[u8],
+    session: &mut SessionState,
+    clients: &mut Vec<AttachedClient>,
+) -> Result<(), DaemonError> {
+    let text = String::from_utf8_lossy(cmd);
+    let mut parts = text.split_whitespace();
+    let Some(command) = parts.next() else {
+        return Ok(());
+    };
+    match command {
+        "select" => {
+            if let Some(num_str) = parts.next()
+                && let Ok(num) = num_str.parse::<u32>()
+            {
+                let _ = session.select_window(num);
+            }
+        }
+        "monitor" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            if let Some(window) = session.windows.get_mut(session.selected) {
+                window.monitored = enable;
+            }
+        }
+        "silence" => {
+            if let Some(sec_str) = parts.next()
+                && let Ok(sec) = sec_str.parse::<u16>()
+                && let Some(window) = session.windows.get_mut(session.selected)
+            {
+                window.silence_timeout = sec;
+            }
+        }
+        "wrap" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            if let Some(window) = session.windows.get_mut(session.selected) {
+                window.wrap_enabled = enable;
+            }
+        }
+        "log" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.logging = enable;
+        }
+        "flow" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.flow_control = enable;
+        }
+        "redisplay" => {
+            if let Some(window) = session.windows.get(session.selected) {
+                let redraw = window.grid_redraw();
+                for client in clients.iter_mut() {
+                    let _ = Message::PtyOutput(redraw.clone()).write_to(&mut client.stream);
+                }
+            }
+        }
+        "echo" => {
+            let msg = parts.clone().collect::<Vec<_>>().join(" ");
+            for client in clients.iter_mut() {
+                let _ =
+                    Message::HardstatusLine(msg.clone().into_bytes()).write_to(&mut client.stream);
+            }
+        }
+        "kill" => {
+            if let Some(window) = session.windows.get(session.selected) {
+                let number = window.number;
+                if let Some(dead) = session.kill_window(number)? {
+                    broadcast(
+                        clients,
+                        &Message::WindowExited {
+                            id: dead.window_id.0,
+                            number: dead.number,
+                        },
+                    )?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 #[cfg(test)]

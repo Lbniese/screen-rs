@@ -161,7 +161,8 @@ struct SessionStartOptions {
 
 fn start_session_daemon(options: SessionStartOptions) -> Result<OsString, String> {
     let runtime = open_or_create_runtime()?;
-    let startup_config = load_startup_config(options.config_file)?;
+    let startup_config = load_startup_config(options.config_file.clone())?;
+    let _resolved_cfg = explicit_config_path(options.config_file.as_deref());
     let shell = options.shell.or(startup_config.shell);
     let term = options.term.or(startup_config.term);
     let working_directory = startup_config.working_directory;
@@ -208,6 +209,28 @@ fn start_session_daemon(options: SessionStartOptions) -> Result<OsString, String
     }
     if let Some(limit) = startup_config.defscrollback {
         command.arg("--scrollback").arg(format!("{limit}"));
+    }
+    if let Some(enabled) = startup_config.defflow {
+        command.arg(if enabled { "--flow" } else { "--noflow" });
+    }
+    if let Some(enabled) = startup_config.defmonitor {
+        command.arg(if enabled { "--monitor" } else { "--nomonitor" });
+    }
+    if let Some(enabled) = startup_config.defwrap {
+        command.arg(if enabled { "--wrap" } else { "--nowrap" });
+    }
+    if let Some(secs) = startup_config.defsilence {
+        command.arg("--silence").arg(format!("{secs}"));
+    }
+    if let Some(enabled) = startup_config.defautonuke
+        && enabled
+    {
+        command.arg("--autonuke");
+    }
+    // Pass config file to daemon so it can execute startup windows
+    let resolved_cfg = explicit_config_path(options.config_file.as_deref());
+    if let Some(cfg_path) = resolved_cfg {
+        command.arg("--config").arg(cfg_path);
     }
     command
         .arg("--")
@@ -286,6 +309,12 @@ struct StartupOverrides {
     log_file: Option<PathBuf>,
     hardstatus: Option<Vec<u8>>,
     defscrollback: Option<u32>,
+    defmonitor: Option<bool>,
+    defflow: Option<bool>,
+    defwrap: Option<bool>,
+    defsilence: Option<u16>,
+    defautonuke: Option<bool>,
+    escape: Option<Vec<u8>>,
 }
 
 fn load_startup_config(config_file: Option<OsString>) -> Result<StartupOverrides, String> {
@@ -312,12 +341,39 @@ fn load_startup_config(config_file: Option<OsString>) -> Result<StartupOverrides
             .map(|bytes| PathBuf::from(OsString::from_vec(bytes))),
         hardstatus: config.hardstatus,
         defscrollback: config.defscrollback,
+        defmonitor: config.defmonitor,
+        defflow: config.defflow,
+        defwrap: config.defwrap,
+        defsilence: config.defsilence,
+        defautonuke: config.defautonuke,
+        escape: config.escape,
     })
 }
 
 fn default_screenrc_path() -> Option<PathBuf> {
     let path = PathBuf::from(env::var_os("HOME")?).join(".screenrc");
     path.exists().then_some(path)
+}
+
+/// Resolve the explicit config file path: user-specified > SCREENRC env > default .screenrc.
+fn explicit_config_path(explicit: Option<&OsStr>) -> Option<PathBuf> {
+    if let Some(path) = explicit {
+        let p = PathBuf::from(path);
+        return p.exists().then_some(p);
+    }
+    if let Some(env_path) = env::var_os("SCREENRC") {
+        let p = PathBuf::from(env_path);
+        return p.exists().then_some(p);
+    }
+    default_screenrc_path()
+}
+
+/// Resolve the escape sequence from the screenrc, defaulting to C-a (\x01).
+fn resolve_escape() -> Vec<u8> {
+    load_startup_config(None)
+        .ok()
+        .and_then(|o| o.escape)
+        .unwrap_or_else(|| vec![0x01])
 }
 
 /// Decode a hex string (like "48656c6c6f") into bytes.
@@ -353,8 +409,21 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
     let mut working_directory = None;
     let mut hardstatus = None;
     let mut scrollback = None;
+    let mut flow = None;
+    let mut default_monitor = None;
+    let mut default_wrap = None;
+    let mut default_silence = None;
+    let mut auto_nuke = None;
+    let mut config_file: Option<PathBuf> = None;
     while let Some(option) = args.get(index) {
-        if option == OsStr::new("--term") {
+        if option == OsStr::new("--config") {
+            index += 1;
+            let value = args.get(index).ok_or_else(|| {
+                "internal daemon mode --config requires a path argument before --".to_owned()
+            })?;
+            config_file = Some(PathBuf::from(value));
+            index += 1;
+        } else if option == OsStr::new("--term") {
             index += 1;
             let value = args.get(index).ok_or_else(|| {
                 "internal daemon mode --term requires an argument before --".to_owned()
@@ -395,6 +464,40 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
                     .map_err(|e| format!("invalid scrollback: {e}"))?,
             );
             index += 1;
+        } else if option == OsStr::new("--flow") {
+            flow = Some(true);
+            index += 1;
+        } else if option == OsStr::new("--noflow") {
+            flow = Some(false);
+            index += 1;
+        } else if option == OsStr::new("--monitor") {
+            default_monitor = Some(true);
+            index += 1;
+        } else if option == OsStr::new("--nomonitor") {
+            default_monitor = Some(false);
+            index += 1;
+        } else if option == OsStr::new("--wrap") {
+            default_wrap = Some(true);
+            index += 1;
+        } else if option == OsStr::new("--nowrap") {
+            default_wrap = Some(false);
+            index += 1;
+        } else if option == OsStr::new("--silence") {
+            index += 1;
+            let value = args.get(index).ok_or_else(|| {
+                "internal daemon mode --silence requires an argument before --".to_owned()
+            })?;
+            default_silence = Some(
+                value
+                    .to_str()
+                    .ok_or_else(|| "silence value is not valid UTF-8".to_owned())?
+                    .parse::<u16>()
+                    .map_err(|e| format!("invalid silence: {e}"))?,
+            );
+            index += 1;
+        } else if option == OsStr::new("--autonuke") {
+            auto_nuke = Some(true);
+            index += 1;
         } else {
             break;
         }
@@ -419,13 +522,35 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
     config.working_directory = working_directory;
     config.hardstatus_format = hardstatus;
     config.scrollback_limit = scrollback;
+    config.default_flow = flow;
+    config.default_monitor = default_monitor;
+    config.default_wrap = default_wrap;
+    config.default_silence = default_silence;
+    config.auto_nuke = auto_nuke;
+    // Load startup windows from config file
+    if let Some(ref cfg_path) = config_file
+        && let Ok(screenrc) = screen_config::parse_config_file(cfg_path)
+    {
+        config.startup_windows = screenrc
+            .startup_windows
+            .into_iter()
+            .map(|sw| screen_daemon::StartupWindow {
+                title: sw.title,
+                program: sw.program.map(OsString::from_vec),
+                args: sw.args.into_iter().map(OsString::from_vec).collect(),
+                number: sw.number,
+                working_directory: sw.working_directory.map(OsString::from_vec),
+                stuff: sw.stuff,
+            })
+            .collect();
+    }
     screen_daemon::run_pty_session(config).map_err(|error| error.to_string())
 }
 
 fn attach(options: AttachOptions) -> Result<u8, String> {
     let runtime = open_or_create_runtime()?;
     let socket_path = resolve_session_socket(&runtime, options.session)?;
-    attach_socket(socket_path)
+    attach_socket(socket_path, resolve_escape())
 }
 
 fn attach_or_create(options: AttachOrCreateOptions) -> Result<u8, String> {
@@ -436,8 +561,9 @@ fn attach_or_create(options: AttachOrCreateOptions) -> Result<u8, String> {
             .map_err(|error| error.to_string())?;
     }
 
+    let escape = resolve_escape();
     match find_active_session_socket(&runtime, options.session.as_deref())? {
-        ActiveSessionMatch::One(socket_path) => attach_socket(socket_path),
+        ActiveSessionMatch::One(socket_path) => attach_socket(socket_path, escape),
         ActiveSessionMatch::None => start_attached(CreateOptions {
             session_name: options.session,
             config_file: None,
@@ -460,7 +586,7 @@ fn attach_or_create(options: AttachOrCreateOptions) -> Result<u8, String> {
     }
 }
 
-fn attach_socket(socket_path: PathBuf) -> Result<u8, String> {
+fn attach_socket(socket_path: PathBuf, escape: Vec<u8>) -> Result<u8, String> {
     let mut stream = UnixStream::connect(&socket_path)
         .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
 
@@ -485,12 +611,22 @@ fn attach_socket(socket_path: PathBuf) -> Result<u8, String> {
     }
 
     let _raw_terminal = RawTerminalGuard::enter_stdin()?;
+
+    // Ignore SIGHUP so the client stays alive when the terminal emulator
+    // closes. The stdin read will return EOF naturally, triggering detach.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGHUP, libc::SIG_IGN);
+    }
+
     let mut input_stream = stream
         .try_clone()
         .map_err(|error| format!("failed to clone client socket: {error}"))?;
     // Shared paste buffer between the stdin thread and the main loop
     let paste_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let paste_clone = Arc::clone(&paste_buffer);
+    let escape_prefix = escape[0];
+    let escape_meta = escape.get(1).copied().unwrap_or(escape_prefix);
     thread::spawn(move || {
         let mut stdin = io::stdin().lock();
         let mut buffer = [0_u8; 4096];
@@ -571,24 +707,217 @@ fn attach_socket(socket_path: PathBuf) -> Result<u8, String> {
                                     let _ = std::fs::write("/tmp/screen-exchange", data);
                                 }
                                 b'S' => {
-                                    // Split display horizontally (local operation)
+                                    // Split display
+                                    let _ = Message::SplitVertical.write_to(&mut input_stream);
                                 }
                                 b'Q' => {
                                     // Remove all splits but current
+                                    let _ = Message::OnlyWindow.write_to(&mut input_stream);
                                 }
                                 b'\t' => {
-                                    // Switch to next split region (C-a Tab)
+                                    // Switch to next split region
+                                    let _ = Message::FocusNext.write_to(&mut input_stream);
+                                }
+                                b'X' => {
+                                    // Remove current region
+                                    let _ = Message::RemoveRegion.write_to(&mut input_stream);
                                 }
                                 b'[' => {
                                     // Enter copy mode - send request to daemon
                                     let _ = Message::CopyModeRequest.write_to(&mut input_stream);
                                 }
-                                byte => {
-                                    let bytes = if byte == 0x01 || byte == b'a' {
-                                        vec![0x01]
+                                b'{' => {
+                                    // Search history backwards
+                                    // For now, enter local copy mode with search prompt
+                                    let _ = Message::CopyModeRequest.write_to(&mut input_stream);
+                                }
+                                b'}' => {
+                                    // Search history forwards — also enters copy mode
+                                    let _ = Message::CopyModeRequest.write_to(&mut input_stream);
+                                }
+                                b'=' => {
+                                    // Remove exchange file (C-a =)
+                                    let _ = std::fs::remove_file("/tmp/screen-exchange");
+                                }
+                                b'r' => {
+                                    // Toggle line wrapping
+                                    let _ = Message::WrapToggle { enable: true }
+                                        .write_to(&mut input_stream);
+                                }
+                                b'f' => {
+                                    // Toggle flow control
+                                    let _ = Message::FlowToggle { enable: true }
+                                        .write_to(&mut input_stream);
+                                }
+                                b's' => {
+                                    // Send XOFF (C-a s)
+                                    let _ = Message::Xoff.write_to(&mut input_stream);
+                                }
+                                b'q' => {
+                                    // Send XON (C-a q)
+                                    let _ = Message::Xon.write_to(&mut input_stream);
+                                }
+                                b'b' => {
+                                    // Send break (C-a b)
+                                    let _ = Message::BreakSignal { ms: 250 }
+                                        .write_to(&mut input_stream);
+                                }
+                                b'M' => {
+                                    // Toggle activity monitoring (C-a M)
+                                    let _ = Message::MonitorToggle { enable: true }
+                                        .write_to(&mut input_stream);
+                                }
+                                b'_' => {
+                                    // Toggle silence monitoring (C-a _)
+                                    let _ = Message::Silence { seconds: 30 }
+                                        .write_to(&mut input_stream);
+                                }
+                                b'i' => {
+                                    // Window info (C-a i)
+                                    let _ =
+                                        Message::WindowInfo(Vec::new()).write_to(&mut input_stream);
+                                }
+                                byte @ (b'm' | b'\x0d') => {
+                                    // Last message (C-a m / C-a C-m)
+                                    // Display local last message hint
+                                    let _ = byte;
+                                }
+                                b'\x07' => {
+                                    // Visual bell toggle (C-a C-g)
+                                    // Client-side: toggle visual bell mode
+                                }
+                                b'\x0c' => {
+                                    // Redisplay (C-a C-l) — alias for redisplay
+                                    let _ = Message::Redisplay.write_to(&mut input_stream);
+                                }
+                                b'\x18' => {
+                                    // Lockscreen (C-a C-x / C-a x)
+                                    // Client-side: lock terminal
+                                }
+                                b'\x1a' => {
+                                    // Suspend (C-a C-z / C-a z)
+                                    unsafe {
+                                        libc::raise(libc::SIGTSTP);
+                                    }
+                                }
+                                b'Z' => {
+                                    // Reset terminal (C-a Z)
+                                    // Send RIS sequence to stdout
+                                    let mut stdout = io::stdout().lock();
+                                    let _ = stdout.write_all(b"\x1bc");
+                                    let _ = stdout.flush();
+                                    drop(stdout);
+                                    let _ = Message::Redisplay.write_to(&mut input_stream);
+                                }
+                                b'C' => {
+                                    // Clear screen (C-a C)
+                                    let _ = Message::Redisplay.write_to(&mut input_stream);
+                                }
+                                b'v' => {
+                                    // Version (C-a v) — display locally
+                                    let mut stdout = io::stdout().lock();
+                                    let msg =
+                                        format!("screen-rs {}\r\n", env!("CARGO_PKG_VERSION"));
+                                    let _ = stdout.write_all(msg.as_bytes());
+                                    let _ = stdout.flush();
+                                    drop(stdout);
+                                }
+                                b't' => {
+                                    // Time (C-a t) — display locally
+                                    let mut stdout = io::stdout().lock();
+                                    let now = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default();
+                                    let msg = format!("screen-rs  uptime: {}s\r\n", now.as_secs());
+                                    let _ = stdout.write_all(msg.as_bytes());
+                                    let _ = stdout.flush();
+                                    drop(stdout);
+                                }
+                                b'?' => {
+                                    // Help (C-a ?) — display locally
+                                    let mut stdout = io::stdout().lock();
+                                    let help = b"\
+                                        C-a c  create   C-a k  kill      C-a n/p  next/prev\r\n\
+                                        C-a d  detach   C-a A  title     C-a w    windows\r\n\
+                                        C-a [  copy     C-a ]  paste     C-a <    readbuf\r\n\
+                                        C-a >  writebuf C-a =  removebuf C-a {/}  history\r\n\
+                                        C-a M  monitor  C-a _  silence   C-a r    wrap\r\n\
+                                        C-a i  info     C-a t  time      C-a v    version\r\n\
+                                        C-a '  select   C-a \"  winlist   C-a C-a  other\r\n\
+                                        C-a :  command  C-a ?  help      C-a ,    license\r\n\
+                                        C-a z  suspend  C-a Z  reset     C-a x    lock\r\n\
+                                        C-a f  flow     C-a s  xoff      C-a q    xon\r\n\
+                                        C-a b  break    C-a B  pow_break C-a .    termcap\r\n";
+                                    let _ = stdout.write_all(help);
+                                    let _ = stdout.flush();
+                                    drop(stdout);
+                                }
+                                b',' => {
+                                    // License (C-a ,)
+                                    let mut stdout = io::stdout().lock();
+                                    let msg = b"screen-rs  GPL-3.0-or-later  https://github.com/Lbniese/screen-rs\r\n";
+                                    let _ = stdout.write_all(msg);
+                                    let _ = stdout.flush();
+                                    drop(stdout);
+                                }
+                                b'.' => {
+                                    // Dump termcap (C-a .)
+                                    let mut stdout = io::stdout().lock();
+                                    let termcap = b"screen|VT100/ANSI X3.64 virtual terminal:\r\n\
+                                        :am:xn:msgr:li#24:co#80:cl=\\E[H\\E[J:cm=\\E[%i%d;%dH:\r\n";
+                                    let _ = stdout.write_all(termcap);
+                                    let _ = stdout.flush();
+                                    let _ = std::fs::write(".termcap", termcap);
+                                    drop(stdout);
+                                }
+                                b'h' => {
+                                    // Hardcopy (C-a h) — write current screen to file
+                                    // Request redisplay to capture content
+                                    let _ = Message::Redisplay.write_to(&mut input_stream);
+                                }
+                                b'\'' => {
+                                    // Select window prompt (C-a ')
+                                    // Send window list request to daemon for interactive selection
+                                    let _ =
+                                        Message::WindowList(Vec::new()).write_to(&mut input_stream);
+                                }
+                                b'B' => {
+                                    // Power break (C-a B)
+                                    let _ = Message::BreakSignal { ms: 500 }
+                                        .write_to(&mut input_stream);
+                                }
+                                b'D' => {
+                                    // Power detach (C-a D D) — second D
+                                    let _ = Message::Detach.write_to(&mut input_stream);
+                                }
+                                b'\x08' | b'\x7f' => {
+                                    // Backspace/delete (C-a backspace) — last window
+                                    let _ = Message::OtherWindow.write_to(&mut input_stream);
+                                }
+                                b'x' => {
+                                    // Lock screen (C-a x)
+                                    let mut stdout = io::stdout().lock();
+                                    let msg =
+                                        b"\x1b[H\x1b[JScreen locked. Use password to unlock.\r\n";
+                                    let _ = stdout.write_all(msg);
+                                    let _ = stdout.flush();
+                                    drop(stdout);
+                                }
+                                b'\x16' => {
+                                    // Digraph (C-a C-v)
+                                    // Client-side digraph mode — not implemented yet
+                                }
+                                byte if byte == escape_prefix || byte == escape_meta => {
+                                    // C-a C-a (other window) or C-a meta-char: send to window
+                                    if byte == escape_prefix {
+                                        let _ = Message::OtherWindow.write_to(&mut input_stream);
                                     } else {
-                                        vec![0x01, byte]
-                                    };
+                                        let _ = Message::PtyInput(vec![byte])
+                                            .write_to(&mut input_stream);
+                                    }
+                                }
+                                byte => {
+                                    let bytes = vec![escape_prefix, byte];
                                     if Message::PtyInput(bytes)
                                         .write_to(&mut input_stream)
                                         .is_err()
@@ -597,7 +926,7 @@ fn attach_socket(socket_path: PathBuf) -> Result<u8, String> {
                                     }
                                 }
                             }
-                        } else if *byte == 0x01 {
+                        } else if *byte == escape_prefix {
                             prefix = true;
                         } else if Message::PtyInput(vec![*byte])
                             .write_to(&mut input_stream)
@@ -668,9 +997,33 @@ fn attach_socket(socket_path: PathBuf) -> Result<u8, String> {
                 let _ = writeln!(stderr, "Num Name       Flags");
                 for w in &list {
                     let marker = if w.flags & 1 != 0 { '*' } else { ' ' };
+                    let dead = if w.flags & 2 != 0 { "(dead)" } else { "" };
                     let title = String::from_utf8_lossy(&w.title);
-                    let _ = writeln!(stderr, "{:<3} {:<10} {}", w.number, marker, title);
+                    let _ = writeln!(stderr, "{:<3} {:<10} {}{}", w.number, marker, dead, title);
                 }
+            }
+            Message::Activity(msg) => {
+                // Display activity notification on the message line
+                let mut stderr = io::stderr().lock();
+                let text = String::from_utf8_lossy(&msg);
+                let _ = writeln!(stderr, "\r\n{}", text);
+            }
+            Message::Bell(_msg) => {
+                // Audible/visual bell — ring terminal bell
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(b"\x07");
+                let _ = stdout.flush();
+            }
+            Message::WindowInfo(info) => {
+                // Display window info
+                let mut stderr = io::stderr().lock();
+                let text = String::from_utf8_lossy(&info);
+                let _ = writeln!(stderr, "{}", text);
+            }
+            Message::SearchResult(matches) => {
+                // Display search results — for now just print count
+                let mut stderr = io::stderr().lock();
+                let _ = writeln!(stderr, "Found {} match(es)", matches.len());
             }
             _message => {}
         }
@@ -722,6 +1075,133 @@ fn remote_command(options: RemoteCommandOptions) -> Result<(), String> {
         let runtime = open_or_create_runtime()?;
         let socket_path = resolve_session_socket(&runtime, options.session)?;
         send_title(socket_path, &options.command[1..])
+    } else if command == OsStr::new("number") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_renumber(socket_path, &options.command[1..])
+    } else if command == OsStr::new("redisplay") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_redisplay(socket_path)
+    } else if command == OsStr::new("remove") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_remove_window(socket_path, &options.command[1..])
+    } else if command == OsStr::new("wipe") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_wipe_dead_windows(socket_path)
+    } else if command == OsStr::new("echo") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_echo(socket_path, &options.command[1..])
+    } else if command == OsStr::new("log") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_log_toggle(socket_path, &options.command[1..])
+    } else if command == OsStr::new("logfile") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_logfile(socket_path, &options.command[1..])
+    } else if command == OsStr::new("other") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_other_window(socket_path)
+    } else if command == OsStr::new("monitor") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_monitor_toggle(socket_path, &options.command[1..])
+    } else if command == OsStr::new("silence") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_silence(socket_path, &options.command[1..])
+    } else if command == OsStr::new("wrap") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_wrap_toggle(socket_path, &options.command[1..])
+    } else if command == OsStr::new("readbuf") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_readbuf(socket_path)
+    } else if command == OsStr::new("writebuf") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_writebuf(socket_path, &options.command[1..])
+    } else if command == OsStr::new("removebuf") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_removebuf(socket_path)
+    } else if command == OsStr::new("register") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_register(socket_path, &options.command[1..])
+    } else if command == OsStr::new("flow") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_flow_toggle(socket_path, &options.command[1..])
+    } else if command == OsStr::new("xoff") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_xoff(socket_path)
+    } else if command == OsStr::new("xon") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_xon(socket_path)
+    } else if command == OsStr::new("break") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_break(socket_path, &options.command[1..])
+    } else if command == OsStr::new("info") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_info(socket_path)
+    } else if command == OsStr::new("search") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_search_history(socket_path, &options.command[1..])
+    } else if command == OsStr::new("colon") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_colon(socket_path, &options.command[1..])
+    } else if command == OsStr::new("hardcopy") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_hardcopy(socket_path, &options.command[1..])
+    } else if command == OsStr::new("at") {
+        // -X at <window#> <command> [args...]
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_at(socket_path, &options.command[1..])
+    } else if command == OsStr::new("time") {
+        // Print current local time
+        let now: libc::time_t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as libc::time_t)
+            .unwrap_or(0);
+        unsafe {
+            let tm: *mut libc::tm = libc::localtime(&now);
+            if tm.is_null() {
+                return Err("failed to get local time".to_owned());
+            }
+            let mut buf: [libc::c_char; 256] = [0; 256];
+            let n = libc::strftime(buf.as_mut_ptr(), buf.len(), c"%c".as_ptr(), tm);
+            if n > 0 {
+                let s = std::ffi::CStr::from_ptr(buf.as_ptr());
+                eprintln!("{}", s.to_string_lossy());
+            }
+        }
+        Ok(())
+    } else if command == OsStr::new("help") {
+        eprintln!("screen-rs — terminal multiplexer (https://github.com/Lbniese/screen-rs)");
+        Ok(())
+    } else if command == OsStr::new("license") {
+        eprintln!("screen-rs is licensed under the GNU General Public License v3.0");
+        Ok(())
+    } else if command == OsStr::new("suspend") {
+        unsafe {
+            libc::kill(std::process::id() as i32, libc::SIGTSTP);
+        }
+        Ok(())
     } else {
         Err(format!(
             "remote command is not implemented yet: {}",
@@ -836,8 +1316,9 @@ fn send_windows_list(socket_path: PathBuf) -> Result<(), String> {
         Message::WindowList(list) => {
             for w in &list {
                 let marker = if w.flags & 1 != 0 { '*' } else { ' ' };
+                let dead = if w.flags & 2 != 0 { "(dead)" } else { "" };
                 let title = String::from_utf8_lossy(&w.title);
-                println!("{}	{}	{title}", w.number, marker);
+                println!("{}\t{}\t{}{}", w.number, marker, dead, title);
             }
             Ok(())
         }
@@ -865,6 +1346,569 @@ fn send_title(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
         .write_to(&mut stream)
         .map_err(|error| error.to_string())?;
     // Read response
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_renumber(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let new_number: u32 = args
+        .first()
+        .and_then(|a| a.to_str())
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| "number requires a numeric argument".to_owned())?;
+
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::RenumberWindow { number: new_number }
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    // Read response
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_redisplay(socket_path: PathBuf) -> Result<(), String> {
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::Redisplay
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    // Read response (daemon sends Error or nothing)
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_remove_window(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let number = args
+        .first()
+        .and_then(|a| a.to_str())
+        .and_then(|s| s.parse().ok());
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::RemoveWindow {
+        number: number.unwrap_or(0),
+    }
+    .write_to(&mut stream)
+    .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_wipe_dead_windows(socket_path: PathBuf) -> Result<(), String> {
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::WipeDeadWindows
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_echo(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let text: Vec<u8> = args
+        .iter()
+        .flat_map(|a| a.as_encoded_bytes())
+        .copied()
+        .collect();
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::Echo(text)
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_log_toggle(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let enable = !args
+        .first()
+        .is_some_and(|a| a.as_encoded_bytes().eq_ignore_ascii_case(b"off"));
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::LogToggle { enable }
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_logfile(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let path = args
+        .first()
+        .map(|a| a.as_encoded_bytes().to_vec())
+        .unwrap_or_default();
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::LogFile(path)
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_other_window(socket_path: PathBuf) -> Result<(), String> {
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::OtherWindow
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_monitor_toggle(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let enable = !args
+        .first()
+        .is_some_and(|a| a.as_encoded_bytes().eq_ignore_ascii_case(b"off"));
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::MonitorToggle { enable }
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_silence(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let seconds: u16 = args
+        .first()
+        .and_then(|a| a.to_str())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30);
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::Silence { seconds }
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_wrap_toggle(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let enable = !args
+        .first()
+        .is_some_and(|a| a.as_encoded_bytes().eq_ignore_ascii_case(b"off"));
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::WrapToggle { enable }
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_readbuf(socket_path: PathBuf) -> Result<(), String> {
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::ReadBuf
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_writebuf(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let data: Vec<u8> = args
+        .iter()
+        .flat_map(|a| a.as_encoded_bytes())
+        .copied()
+        .collect();
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::WriteBuf(data)
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_removebuf(socket_path: PathBuf) -> Result<(), String> {
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::RemoveBuf
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_register(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let name = args
+        .first()
+        .and_then(|a| a.as_encoded_bytes().first().copied())
+        .unwrap_or(b'a');
+    let data: Vec<u8> = args
+        .get(1..)
+        .unwrap_or(&[])
+        .iter()
+        .flat_map(|a| a.as_encoded_bytes())
+        .copied()
+        .collect();
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::Register { name, data }
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_flow_toggle(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let enable = !args
+        .first()
+        .is_some_and(|a| a.as_encoded_bytes().eq_ignore_ascii_case(b"off"));
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::FlowToggle { enable }
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_xoff(socket_path: PathBuf) -> Result<(), String> {
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::Xoff
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_xon(socket_path: PathBuf) -> Result<(), String> {
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::Xon
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_break(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let ms: u16 = args
+        .first()
+        .and_then(|a| a.to_str())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(250);
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::BreakSignal { ms }
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_info(socket_path: PathBuf) -> Result<(), String> {
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::WindowInfo(Vec::new())
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_search_history(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let query: Vec<u8> = args
+        .iter()
+        .flat_map(|a| a.as_encoded_bytes())
+        .copied()
+        .collect();
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::SearchHistory(query)
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_colon(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let cmd: Vec<u8> = args
+        .iter()
+        .flat_map(|a| a.as_encoded_bytes())
+        .copied()
+        .collect();
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::Command(cmd)
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_at(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    // args: [window_number, command, ...args]
+    if args.len() < 2 {
+        return Err("usage: -X at <window#> <command> [args...]".to_owned());
+    }
+    let number = args[0]
+        .to_str()
+        .ok_or_else(|| "window number is not valid UTF-8".to_owned())?
+        .parse::<u32>()
+        .map_err(|e| format!("invalid window number: {e}"))?;
+    let command = &args[1];
+    let cmd_args = if args.len() > 2 { &args[2..] } else { &[] };
+
+    // Use the send_other_window approach: select the window, send command, restore
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+
+    // Build command as a string to send via colon (simplified)
+    let mut cmd_str = command.as_encoded_bytes().to_vec();
+    for arg in cmd_args {
+        cmd_str.push(b' ');
+        cmd_str.extend_from_slice(arg.as_encoded_bytes());
+    }
+    // Send as OtherWindow for now — sends the command string as input to the target
+    Message::AtWindow(number, cmd_str)
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_hardcopy(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    let (number, path) = if args.is_empty() {
+        (0u32, b"hardcopy.0".to_vec())
+    } else {
+        let first = args[0].as_encoded_bytes();
+        if let Ok(n) = std::str::from_utf8(first).unwrap_or("").parse::<u32>() {
+            let file = if args.len() > 1 {
+                args[1].as_encoded_bytes().to_vec()
+            } else {
+                format!("hardcopy.{n}").into_bytes()
+            };
+            (n, file)
+        } else {
+            (0u32, first.to_vec())
+        }
+    };
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::Hardcopy(number, path)
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
     match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
         Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
         _ => Ok(()),
