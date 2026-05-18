@@ -276,6 +276,8 @@ struct Modes {
     application_keypad: bool,
     /// Bracketed paste.
     bracketed_paste: bool,
+    /// Mouse tracking mode (SGR extended / 1006).
+    mouse_sgr: bool,
     /// Auto-wrap (DECAWM).
     auto_wrap: bool,
     /// Reverse video (DECSCNM).
@@ -696,7 +698,7 @@ impl TerminalState {
                         1003 => {}                                 // all motion tracking – ignored
                         1004 => {}                                 // focus tracking – ignored
                         1005 => {}                                 // utf-8 mouse – ignored
-                        1006 => {}                                 // SGR mouse – ignored
+                        1006 => self.modes.mouse_sgr = true,       // SGR mouse
                         1047 => self.use_alternate_screen(true),   // alt screen (xterm)
                         1048 => {
                             // Save cursor (associated with 1047/1049)
@@ -728,7 +730,7 @@ impl TerminalState {
                         1003 => {}
                         1004 => {}
                         1005 => {}
-                        1006 => {}
+                        1006 => self.modes.mouse_sgr = false,
                         1047 => self.use_alternate_screen(false),
                         1049 => self.use_alternate_screen(false),
                         2004 => self.modes.bracketed_paste = false,

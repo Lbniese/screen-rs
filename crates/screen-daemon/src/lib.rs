@@ -78,6 +78,14 @@ pub struct StartupWindow {
 }
 
 #[derive(Debug, Clone)]
+pub struct DaemonBacktick {
+    pub id: u16,
+    pub perpetual: bool,
+    pub refresh_secs: Option<u32>,
+    pub command: OsString,
+}
+
+#[derive(Debug, Clone)]
 pub struct PtySessionConfig {
     pub socket_path: PathBuf,
     pub program: OsString,
@@ -98,6 +106,57 @@ pub struct PtySessionConfig {
     pub auto_nuke: Option<bool>,
     /// Additional windows to create at session startup (from .screenrc).
     pub startup_windows: Vec<StartupWindow>,
+    // ── New config fields ──
+    /// Search case sensitivity.
+    pub ignorecase: Option<bool>,
+    /// Compact empty lines in scrollback.
+    pub compacthist: Option<bool>,
+    /// File for exchange buffer.
+    pub bufferfile: Option<OsString>,
+    /// Key sequences for copy mode marks.
+    pub markkeys: Option<Vec<u8>>,
+    /// Visual bell.
+    pub vbell: Option<bool>,
+    /// Visual bell message.
+    pub vbell_msg: Option<Vec<u8>>,
+    /// Audible bell message.
+    pub bell_msg: Option<Vec<u8>>,
+    /// Auto-detach on hangup.
+    pub autodetach: Option<bool>,
+    /// Per-window scrollback size.
+    pub scrollback: Option<u32>,
+    /// Message display time (seconds).
+    pub msgwait: Option<u32>,
+    /// Background color erase.
+    pub bce: Option<bool>,
+    /// Default UTF-8 mode.
+    pub defutf8: Option<bool>,
+    /// Default character encoding.
+    pub defencoding: Option<OsString>,
+    /// Slow paste delay (ms).
+    pub slowpaste: Option<u32>,
+    /// Session name for reattach.
+    pub sessionname: Option<OsString>,
+    /// Maximum number of windows.
+    pub maxwin: Option<u32>,
+    /// CR/LF mode (autocr).
+    pub crlf: Option<bool>,
+    /// Hardcopy print command.
+    pub printcmd: Option<OsString>,
+    /// Hardcopy append mode.
+    pub hardcopy_append: Option<bool>,
+    /// Non-blocking I/O mode.
+    pub nonblock: Option<bool>,
+    /// Zmodem catch.
+    pub zmodem: Option<bool>,
+    /// Wall message.
+    pub wall: Option<Vec<u8>>,
+    /// Backtick commands.
+    pub backtick: Vec<DaemonBacktick>,
+    /// Environment variables to set.
+    pub setenv: Vec<(OsString, OsString)>,
+    /// Environment variables to unset.
+    pub unsetenv: Vec<OsString>,
 }
 
 impl PtySessionConfig {
@@ -124,6 +183,31 @@ impl PtySessionConfig {
             default_silence: None,
             auto_nuke: None,
             startup_windows: Vec::new(),
+            ignorecase: None,
+            compacthist: None,
+            bufferfile: None,
+            markkeys: None,
+            vbell: None,
+            vbell_msg: None,
+            bell_msg: None,
+            autodetach: None,
+            scrollback: None,
+            msgwait: None,
+            bce: None,
+            defutf8: None,
+            defencoding: None,
+            slowpaste: None,
+            sessionname: None,
+            maxwin: None,
+            crlf: None,
+            printcmd: None,
+            hardcopy_append: None,
+            nonblock: None,
+            zmodem: None,
+            wall: None,
+            backtick: Vec::new(),
+            setenv: Vec::new(),
+            unsetenv: Vec::new(),
         }
     }
 
@@ -160,6 +244,23 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     if let Some(enabled) = config.default_flow {
         session.flow_control = enabled;
     }
+    if let Some(v) = config.ignorecase {
+        session.ignorecase = v;
+    }
+    session.maxwin = config.maxwin;
+    if let Some(v) = config.autodetach {
+        session.autodetach = v;
+    }
+    session.printcmd = config.printcmd.clone();
+    if let Some(v) = config.hardcopy_append {
+        session.hardcopy_append = v;
+    }
+    if let Some(v) = config.zmodem {
+        session.zmodem = v;
+    }
+    session.wall = config.wall.clone();
+    session.backtick = config.backtick.clone();
+    // setenv/unsetenv are applied by the CLI before daemon start
     let _window0 = session.create_window(
         &config.program,
         &config.args,
@@ -1093,6 +1194,22 @@ struct SessionState {
     copy_mode_active: bool,
     copy_mode_cursor: u32,
     copy_mode_mark: Option<u32>,
+    /// Search case sensitivity.
+    ignorecase: bool,
+    /// Max windows.
+    maxwin: Option<u32>,
+    /// Auto-detach on hangup.
+    autodetach: bool,
+    /// Hardcopy print command.
+    printcmd: Option<OsString>,
+    /// Hardcopy append mode.
+    hardcopy_append: bool,
+    /// Zmodem catch.
+    zmodem: bool,
+    /// Wall message.
+    wall: Option<Vec<u8>>,
+    /// Backtick commands to run.
+    backtick: Vec<DaemonBacktick>,
 }
 
 #[derive(Debug, Clone)]
@@ -1161,6 +1278,14 @@ impl SessionState {
             copy_mode_active: false,
             copy_mode_cursor: 0,
             copy_mode_mark: None,
+            ignorecase: true,
+            maxwin: None,
+            autodetach: false,
+            printcmd: None,
+            hardcopy_append: false,
+            zmodem: false,
+            wall: None,
+            backtick: Vec::new(),
         }
     }
 
@@ -1175,6 +1300,15 @@ impl SessionState {
         working_directory: Option<&Path>,
         scrollback_limit: Option<u32>,
     ) -> Result<WindowCreated, DaemonError> {
+        // Enforce maxwin limit
+        if let Some(max) = self.maxwin
+            && self.windows.len() >= max as usize
+        {
+            return Err(DaemonError::MaxWindowsExceeded {
+                max,
+                current: self.windows.len(),
+            });
+        }
         let id = screen_core::WindowId(self.next_id);
         self.next_id += 1;
         let number = self.next_number;
@@ -2267,6 +2401,7 @@ pub enum DaemonError {
     ConfigureClient(io::Error),
     Protocol(ProtocolError),
     Pty(PtyError),
+    MaxWindowsExceeded { max: u32, current: usize },
 }
 
 impl fmt::Display for DaemonError {
@@ -2288,6 +2423,9 @@ impl fmt::Display for DaemonError {
             }
             Self::Protocol(error) => write!(formatter, "{error}"),
             Self::Pty(error) => write!(formatter, "{error}"),
+            Self::MaxWindowsExceeded { max, current } => {
+                write!(formatter, "max windows ({max}) exceeded ({current})")
+            }
         }
     }
 }
@@ -2299,7 +2437,7 @@ impl Error for DaemonError {
             Self::Accept(error) | Self::ConfigureClient(error) => Some(error),
             Self::Protocol(error) => Some(error),
             Self::Pty(error) => Some(error),
-            Self::SocketPathExists { .. } => None,
+            Self::MaxWindowsExceeded { .. } | Self::SocketPathExists { .. } => None,
         }
     }
 }

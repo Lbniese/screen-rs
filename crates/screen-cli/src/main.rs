@@ -527,7 +527,7 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
     config.default_wrap = default_wrap;
     config.default_silence = default_silence;
     config.auto_nuke = auto_nuke;
-    // Load startup windows from config file
+    // Load startup windows and additional config from config file
     if let Some(ref cfg_path) = config_file
         && let Ok(screenrc) = screen_config::parse_config_file(cfg_path)
     {
@@ -542,6 +542,93 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
                 working_directory: sw.working_directory.map(OsString::from_vec),
                 stuff: sw.stuff,
             })
+            .collect();
+        // Wire all new config fields
+        if let Some(v) = screenrc.ignorecase {
+            config.ignorecase = Some(v);
+        }
+        if let Some(v) = screenrc.compacthist {
+            config.compacthist = Some(v);
+        }
+        if let Some(v) = screenrc.bufferfile {
+            config.bufferfile = Some(OsString::from_vec(v));
+        }
+        if let Some(v) = screenrc.markkeys {
+            config.markkeys = Some(v);
+        }
+        if let Some(v) = screenrc.vbell {
+            config.vbell = Some(v);
+        }
+        if let Some(v) = screenrc.vbell_msg {
+            config.vbell_msg = Some(v);
+        }
+        if let Some(v) = screenrc.bell_msg {
+            config.bell_msg = Some(v);
+        }
+        if let Some(v) = screenrc.autodetach {
+            config.autodetach = Some(v);
+        }
+        if let Some(v) = screenrc.scrollback {
+            config.scrollback = Some(v);
+        }
+        if let Some(v) = screenrc.msgwait {
+            config.msgwait = Some(v);
+        }
+        if let Some(v) = screenrc.bce {
+            config.bce = Some(v);
+        }
+        if let Some(v) = screenrc.defutf8 {
+            config.defutf8 = Some(v);
+        }
+        if let Some(v) = screenrc.defencoding {
+            config.defencoding = Some(OsString::from_vec(v));
+        }
+        if let Some(v) = screenrc.slowpaste {
+            config.slowpaste = Some(v);
+        }
+        if let Some(v) = screenrc.sessionname {
+            config.sessionname = Some(OsString::from_vec(v));
+        }
+        if let Some(v) = screenrc.maxwin {
+            config.maxwin = Some(v);
+        }
+        if let Some(v) = screenrc.crlf {
+            config.crlf = Some(v);
+        }
+        if let Some(v) = screenrc.printcmd {
+            config.printcmd = Some(OsString::from_vec(v));
+        }
+        if let Some(v) = screenrc.hardcopy_append {
+            config.hardcopy_append = Some(v);
+        }
+        if let Some(v) = screenrc.nonblock {
+            config.nonblock = Some(v);
+        }
+        if let Some(v) = screenrc.zmodem {
+            config.zmodem = Some(v);
+        }
+        if let Some(v) = screenrc.wall {
+            config.wall = Some(v);
+        }
+        config.backtick = screenrc
+            .backtick
+            .into_iter()
+            .map(|bc| screen_daemon::DaemonBacktick {
+                id: bc.id,
+                perpetual: matches!(bc.lifetime, screen_config::BacktickLifetime::Always),
+                refresh_secs: bc.autorefresh,
+                command: OsString::from_vec(bc.command),
+            })
+            .collect();
+        config.setenv = screenrc
+            .setenv
+            .into_iter()
+            .map(|(k, v)| (OsString::from_vec(k), OsString::from_vec(v)))
+            .collect();
+        config.unsetenv = screenrc
+            .unsetenv
+            .into_iter()
+            .map(OsString::from_vec)
             .collect();
     }
     screen_daemon::run_pty_session(config).map_err(|error| error.to_string())

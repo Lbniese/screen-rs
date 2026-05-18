@@ -4,7 +4,7 @@ yanked = "deny"
 
 [licenses]
 version = 2
-allow = ["GPL-3.0-or-later"]
+allow = ["GPL-3.0-or-later", "MIT", "Apache-2.0"]
 
 [bans]
 multiple-versions = "warn"
