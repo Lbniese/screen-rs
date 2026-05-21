@@ -264,6 +264,18 @@ impl Margins {
 // Modes
 // ---------------------------------------------------------------------------
 
+/// Cursor style for DECSCUSR.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum CursorStyle {
+    #[default]
+    BlinkingBlock,
+    SteadyBlock,
+    BlinkingUnderline,
+    SteadyUnderline,
+    BlinkingBar,
+    SteadyBar,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct Modes {
     /// Origin mode (DECOM): cursor positioning is relative to margins.
@@ -284,6 +296,8 @@ struct Modes {
     reverse_screen: bool,
     /// Show/hide cursor (DECTCEM).
     show_cursor: bool,
+    /// Cursor shape (DECSCUSR).
+    cursor_style: CursorStyle,
 }
 
 impl Modes {
@@ -291,6 +305,7 @@ impl Modes {
         Self {
             auto_wrap: true,
             show_cursor: true,
+            cursor_style: CursorStyle::BlinkingBlock,
             ..Default::default()
         }
     }
@@ -316,6 +331,8 @@ pub struct TerminalState {
     parser: ParserState,
     scrollback: Vec<Vec<Cell>>,
     scrollback_max: u32,
+    /// Accumulated escape sequence responses to write back to pty.
+    response_buffer: Vec<u8>,
 }
 
 impl TerminalState {
@@ -338,6 +355,7 @@ impl TerminalState {
             parser: ParserState::Ground,
             scrollback: Vec::new(),
             scrollback_max: 1000,
+            response_buffer: Vec::new(),
         }
     }
 
@@ -406,10 +424,11 @@ impl TerminalState {
         }
     }
 
-    pub fn apply(&mut self, bytes: &[u8]) {
+    pub fn apply(&mut self, bytes: &[u8]) -> Vec<u8> {
         for byte in bytes {
             self.apply_byte(*byte);
         }
+        std::mem::take(&mut self.response_buffer)
     }
 
     pub fn cell(&self, column: u16, row: u16) -> Option<&Cell> {
@@ -658,6 +677,19 @@ impl TerminalState {
             b'h' => self.set_mode(params, intermediates),
             b'l' => self.reset_mode(params, intermediates),
             b'm' => self.apply_sgr(params),
+            b'q' if intermediates.contains(&b' ') => {
+                // DECSCUSR – cursor style
+                let style = param_or(params, 0, 0);
+                self.modes.cursor_style = match style {
+                    0 | 1 => CursorStyle::BlinkingBlock,
+                    2 => CursorStyle::SteadyBlock,
+                    3 => CursorStyle::BlinkingUnderline,
+                    4 => CursorStyle::SteadyUnderline,
+                    5 => CursorStyle::BlinkingBar,
+                    6 => CursorStyle::SteadyBar,
+                    _ => self.modes.cursor_style,
+                };
+            }
             b'n' => self.device_status_report(params),
             b'r' => self.set_margins(params),
             b's' => {
@@ -671,9 +703,14 @@ impl TerminalState {
                 self.current_style = self.saved_style;
             }
             b'c' => {
-                // Primary DA – respond with "VT102 with no options"
-                // We don't actually send a response since we're a display engine,
-                // but this is handled if we need to.
+                if intermediates.contains(&b'>') {
+                    // Secondary DA (CSI > c) – respond as GNU Screen
+                    self.response_buffer.extend_from_slice(b"\x1b[>41;304;0c");
+                } else {
+                    // Primary DA – respond as VT220
+                    self.response_buffer
+                        .extend_from_slice(b"\x1b[?62;1;2;6;7;8;9;15;22c");
+                }
             }
             _ => {}
         }
@@ -809,10 +846,21 @@ impl TerminalState {
     }
 
     fn device_status_report(&mut self, params: &[Option<u16>]) {
-        // DSR – terminal status reports.
-        // We don't actually write responses since this is a display engine,
-        // but we handle the common queries gracefully (no-ops here).
-        let _ = params;
+        match param_or(params, 0, 0) {
+            5 => {
+                self.response_buffer.extend_from_slice(b"\x1b[0n");
+            }
+            6 => {
+                let row = self.cursor.row.saturating_add(1);
+                let col = self.cursor.column.saturating_add(1);
+                self.response_buffer.extend_from_slice(b"\x1b[");
+                write_uint(&mut self.response_buffer, row as u64);
+                self.response_buffer.push(b';');
+                write_uint(&mut self.response_buffer, col as u64);
+                self.response_buffer.push(b'R');
+            }
+            _ => {}
+        }
     }
 
     // -- margins (scrolling region) ------------------------------------------
@@ -1253,6 +1301,23 @@ fn move_clamped(value: u16, offset: i32, min: u16, max: u16) -> u16 {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+fn write_uint(buf: &mut Vec<u8>, mut n: u64) {
+    if n == 0 {
+        buf.push(b'0');
+        return;
+    }
+    let mut digits = [0u8; 20];
+    let mut pos = 0;
+    while n > 0 {
+        digits[pos] = (n % 10) as u8 + b'0';
+        pos += 1;
+        n /= 10;
+    }
+    for i in (0..pos).rev() {
+        buf.push(digits[i]);
+    }
+}
 
 #[cfg(test)]
 mod tests {

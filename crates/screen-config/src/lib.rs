@@ -97,6 +97,10 @@ pub struct ScreenConfig {
     pub setenv: Vec<(Vec<u8>, Vec<u8>)>,
     /// Unset environment variables at session start.
     pub unsetenv: Vec<Vec<u8>>,
+    /// Multi-user mode.
+    pub multiuser: Option<bool>,
+    /// ACL entries.
+    pub acl: Vec<ConfigAclEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +127,13 @@ pub struct BacktickCommand {
     pub lifetime: BacktickLifetime,
     pub autorefresh: Option<u32>,
     pub command: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigAclEntry {
+    pub username: Vec<u8>,
+    pub permissions: Vec<u8>,
+    pub password: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -653,6 +664,40 @@ fn execute_command(
                 config.merge_from(source_config);
             }
         }
+        b"multiuser" => {
+            config.multiuser = Some(bool_arg(args, command, line)?);
+        }
+        b"acladd" => {
+            if !args.is_empty() {
+                let perms = if args.len() >= 2 {
+                    args[1].clone()
+                } else {
+                    b"rwx".to_vec()
+                };
+                let password = if args.len() >= 3 {
+                    Some(args[2].clone())
+                } else {
+                    None
+                };
+                config.acl.push(ConfigAclEntry {
+                    username: args[0].clone(),
+                    permissions: perms,
+                    password,
+                });
+            }
+        }
+        b"aclchg" => {
+            if args.len() >= 2 {
+                let perms = args[1].clone();
+                if let Some(entry) = config.acl.iter_mut().find(|e| e.username == args[0]) {
+                    entry.permissions = perms;
+                }
+            }
+        }
+        b"acldel" if !args.is_empty() => {
+            let user = &args[0];
+            config.acl.retain(|e| e.username != *user);
+        }
         _ => {
             // Unknown commands are silently ignored (GNU Screen behavior)
         }
@@ -865,6 +910,10 @@ impl ScreenConfig {
         self.backtick.extend(other.backtick);
         self.setenv.extend(other.setenv);
         self.unsetenv.extend(other.unsetenv);
+        if other.multiuser.is_some() {
+            self.multiuser = other.multiuser;
+        }
+        self.acl.extend(other.acl);
         self.bindings.extend(other.bindings);
         self.startup_windows.extend(other.startup_windows);
     }

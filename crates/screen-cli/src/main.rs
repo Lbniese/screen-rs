@@ -574,6 +574,9 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
         if let Some(v) = screenrc.msgwait {
             config.msgwait = Some(v);
         }
+        if let Some(v) = screenrc.msgminwait {
+            config.msgminwait = Some(v);
+        }
         if let Some(v) = screenrc.bce {
             config.bce = Some(v);
         }
@@ -629,6 +632,27 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
             .unsetenv
             .into_iter()
             .map(OsString::from_vec)
+            .collect();
+        if let Some(v) = screenrc.multiuser {
+            config.multiuser = Some(v);
+        }
+        config.acl = screenrc
+            .acl
+            .into_iter()
+            .map(|e| screen_daemon::AclEntry {
+                username: e.username,
+                permissions: screen_daemon::AclPermissions(e.permissions.iter().fold(
+                    0u8,
+                    |acc, b| match b {
+                        b'r' => acc | screen_daemon::AclPermissions::READ,
+                        b'w' => acc | screen_daemon::AclPermissions::WRITE,
+                        b'x' => acc | screen_daemon::AclPermissions::EXEC,
+                        b'd' => acc | screen_daemon::AclPermissions::DETACH,
+                        _ => acc,
+                    },
+                )),
+                password: e.password,
+            })
             .collect();
     }
     screen_daemon::run_pty_session(config).map_err(|error| error.to_string())
@@ -863,6 +887,18 @@ fn attach_socket(socket_path: PathBuf, escape: Vec<u8>) -> Result<u8, String> {
                                     // Window info (C-a i)
                                     let _ =
                                         Message::WindowInfo(Vec::new()).write_to(&mut input_stream);
+                                }
+                                b'\\' => {
+                                    // Kill all windows and quit (C-a \)
+                                    let _ = Message::Shutdown.write_to(&mut input_stream);
+                                }
+                                b'F' => {
+                                    // Fit window to region (C-a F)
+                                    let _ = Message::Resize {
+                                        columns: 0,
+                                        rows: 0,
+                                    }
+                                    .write_to(&mut input_stream);
                                 }
                                 byte @ (b'm' | b'\x0d') => {
                                     // Last message (C-a m / C-a C-m)
@@ -1259,6 +1295,43 @@ fn remote_command(options: RemoteCommandOptions) -> Result<(), String> {
         let runtime = open_or_create_runtime()?;
         let socket_path = resolve_session_socket(&runtime, options.session)?;
         send_at(socket_path, &options.command[1..])
+    } else if command == OsStr::new("eval") {
+        // -X eval <config_string> — execute as config commands
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_remote_config(socket_path, &options.command[1..])
+    } else if command == OsStr::new("sleep") {
+        // -X sleep <seconds> — pause before next command
+        if let Some(secs) = options.command.get(1)
+            && let Ok(n) = secs.to_str().unwrap_or("0").parse::<u64>()
+        {
+            std::thread::sleep(std::time::Duration::from_secs(n));
+        }
+        Ok(())
+    } else if command == OsStr::new("sessionname") {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_sessionname(socket_path, &options.command[1..])
+    } else if command == OsStr::new("msgwait")
+        || command == OsStr::new("msgminwait")
+        || command == OsStr::new("maxwin")
+        || command == OsStr::new("zombie")
+        || command == OsStr::new("password")
+        || command == OsStr::new("setenv")
+        || command == OsStr::new("unsetenv")
+        || command == OsStr::new("multiuser")
+        || command == OsStr::new("acladd")
+        || command == OsStr::new("acldel")
+        || command == OsStr::new("aclchg")
+    {
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_remote_config(socket_path, &options.command)
+    } else if command == OsStr::new("exec") {
+        // -X exec <command> [args...] — start command in a new window
+        let runtime = open_or_create_runtime()?;
+        let socket_path = resolve_session_socket(&runtime, options.session)?;
+        send_exec(socket_path, &options.command[1..])
     } else if command == OsStr::new("time") {
         // Print current local time
         let now: libc::time_t = std::time::SystemTime::now()
@@ -1918,6 +1991,85 @@ fn send_colon(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
     match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
         Message::HelloAck => {}
         message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::Command(cmd)
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_remote_config(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    // Build config string from args
+    let cmd_str: Vec<u8> = args
+        .iter()
+        .flat_map(|a| {
+            let mut v = a.as_encoded_bytes().to_vec();
+            v.push(b' ');
+            v
+        })
+        .collect();
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::Command(cmd_str)
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_sessionname(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("usage: -X sessionname <name>".to_owned());
+    }
+    let name = args[0].as_encoded_bytes().to_vec();
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::Command(b"sessionname ".iter().chain(name.iter()).copied().collect())
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        _ => Ok(()),
+    }
+}
+
+fn send_exec(socket_path: PathBuf, args: &[OsString]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("usage: -X exec <command> [args...]".to_owned());
+    }
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    // Build screen command: "screen <args...>"
+    let mut cmd = b"screen ".to_vec();
+    for arg in args {
+        cmd.extend_from_slice(arg.as_encoded_bytes());
+        cmd.push(b' ');
     }
     Message::Command(cmd)
         .write_to(&mut stream)

@@ -77,6 +77,70 @@ pub struct StartupWindow {
     pub stuff: Option<Vec<u8>>,
 }
 
+/// Permission bits for ACL entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AclPermissions(pub u8);
+
+impl AclPermissions {
+    pub const READ: u8 = 0x01;
+    pub const WRITE: u8 = 0x02;
+    pub const EXEC: u8 = 0x04;
+    pub const DETACH: u8 = 0x08;
+
+    pub const fn all() -> u8 {
+        Self::READ | Self::WRITE | Self::EXEC | Self::DETACH
+    }
+
+    pub fn has(self, perm: u8) -> bool {
+        self.0 & perm != 0
+    }
+
+    pub fn parse_perms(s: &str) -> Self {
+        let mut perms = 0u8;
+        for c in s.chars() {
+            match c {
+                'r' => perms |= Self::READ,
+                'w' => perms |= Self::WRITE,
+                'x' => perms |= Self::EXEC,
+                'd' => perms |= Self::DETACH,
+                _ => {}
+            }
+        }
+        Self(perms)
+    }
+
+    pub fn to_str(self) -> String {
+        let mut s = String::new();
+        if self.has(Self::READ) {
+            s.push('r');
+        }
+        if self.has(Self::WRITE) {
+            s.push('w');
+        }
+        if self.has(Self::EXEC) {
+            s.push('x');
+        }
+        if self.has(Self::DETACH) {
+            s.push('d');
+        }
+        s
+    }
+}
+
+impl Default for AclPermissions {
+    fn default() -> Self {
+        Self(Self::all())
+    }
+}
+
+/// ACL entry for a user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AclEntry {
+    pub username: Vec<u8>,
+    pub permissions: AclPermissions,
+    pub password: Option<Vec<u8>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct DaemonBacktick {
     pub id: u16,
@@ -127,6 +191,8 @@ pub struct PtySessionConfig {
     pub scrollback: Option<u32>,
     /// Message display time (seconds).
     pub msgwait: Option<u32>,
+    /// Minimum message wait time.
+    pub msgminwait: Option<u32>,
     /// Background color erase.
     pub bce: Option<bool>,
     /// Default UTF-8 mode.
@@ -137,6 +203,8 @@ pub struct PtySessionConfig {
     pub slowpaste: Option<u32>,
     /// Session name for reattach.
     pub sessionname: Option<OsString>,
+    /// Session password.
+    pub password: Option<OsString>,
     /// Maximum number of windows.
     pub maxwin: Option<u32>,
     /// CR/LF mode (autocr).
@@ -157,6 +225,10 @@ pub struct PtySessionConfig {
     pub setenv: Vec<(OsString, OsString)>,
     /// Environment variables to unset.
     pub unsetenv: Vec<OsString>,
+    /// Enable multi-user mode.
+    pub multiuser: Option<bool>,
+    /// ACL entries for multi-user access.
+    pub acl: Vec<AclEntry>,
 }
 
 impl PtySessionConfig {
@@ -193,11 +265,13 @@ impl PtySessionConfig {
             autodetach: None,
             scrollback: None,
             msgwait: None,
+            msgminwait: None,
             bce: None,
             defutf8: None,
             defencoding: None,
             slowpaste: None,
             sessionname: None,
+            password: None,
             maxwin: None,
             crlf: None,
             printcmd: None,
@@ -208,6 +282,8 @@ impl PtySessionConfig {
             backtick: Vec::new(),
             setenv: Vec::new(),
             unsetenv: Vec::new(),
+            multiuser: None,
+            acl: Vec::new(),
         }
     }
 
@@ -261,6 +337,23 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     session.wall = config.wall.clone();
     session.backtick = config.backtick.clone();
     // setenv/unsetenv are applied by the CLI before daemon start
+    if let Some(v) = config.msgwait {
+        session.msgwait = v;
+    }
+    if let Some(v) = config.msgminwait {
+        session.msgminwait = v;
+    }
+    if let Some(ref name) = config.sessionname {
+        session.sessionname = Some(name.as_encoded_bytes().to_vec());
+    }
+    if let Some(ref pw) = config.password {
+        session.password = Some(pw.as_encoded_bytes().to_vec());
+    }
+    session.markkeys = config.markkeys.clone();
+    if let Some(v) = config.multiuser {
+        session.multiuser = v;
+    }
+    session.acl.extend(config.acl.iter().cloned());
     let _window0 = session.create_window(
         &config.program,
         &config.args,
@@ -290,9 +383,9 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
         if let Some(title) = &sw.title
             && let Some(win) = session.windows.last_mut()
         {
-            win.terminal.apply(b"\x1b]2;");
-            win.terminal.apply(title);
-            win.terminal.apply(b"\x07");
+            let _ = win.terminal.apply(b"\x1b]2;");
+            let _ = win.terminal.apply(title);
+            let _ = win.terminal.apply(b"\x07");
         }
         // Select specific number
         if let Some(number) = sw.number {
@@ -344,6 +437,15 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
         while let Ok(event) = client_rx.try_recv() {
             match event {
                 ClientEvent::Input(id, bytes) => {
+                    // In region mode, route input to focused region's window
+                    let effective_window = if session.regions.len() > 1 {
+                        session
+                            .regions
+                            .get(session.focused_region)
+                            .map(|r| r.window_idx)
+                    } else {
+                        clients.iter().find(|c| c.id == id).map(|c| c.selected)
+                    };
                     // If copy mode is active, redirect keystrokes to copy mode
                     if session.copy_mode_active {
                         if let Some(c) = clients.iter().find(|c| c.id == id) {
@@ -476,7 +578,8 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                             }
                         }
                     } else if let Some(client) = clients.iter().find(|c| c.id == id) {
-                        session.write_to_window(client.selected, &bytes)?;
+                        session
+                            .write_to_window(effective_window.unwrap_or(client.selected), &bytes)?;
                     }
                 }
                 ClientEvent::Resize(id, size) => {
@@ -1002,6 +1105,8 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
 
         // Poll all windows for output
         let mut any_exited = false;
+        let region_mode = session.regions.len() > 1;
+        let mut needs_composite = false;
         for (idx, window) in session.windows.iter_mut().enumerate() {
             if !window.is_alive() {
                 continue;
@@ -1011,7 +1116,11 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                 if !output.is_empty() {
                     // Feed output through the terminal engine for scrollback tracking
                     let old_title = window.terminal.title.clone();
-                    window.terminal.apply(&output);
+                    let responses = window.terminal.apply(&output);
+                    // Write terminal query responses back to the pty
+                    if !responses.is_empty() {
+                        let _ = pty.write_all(&responses);
+                    }
                     window.last_activity = SystemTime::now();
 
                     // Broadcast title change to all clients
@@ -1089,10 +1198,19 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         let _ = f.flush();
                     }
                     window.buffer_output(&output, config.output_buffer_limit);
-                    // Send to clients that have this window selected
-                    broadcast_to_clients_viewing(&mut clients, idx, &output)?;
+                    // Send to clients
+                    if region_mode {
+                        needs_composite = true;
+                    } else {
+                        broadcast_to_clients_viewing(&mut clients, idx, &output)?;
+                    }
                 }
             }
+        }
+
+        // In region mode, send composite after all window output processed
+        if needs_composite {
+            broadcast_region_layout(&session, &mut clients)?;
         }
 
         // Check for child exits
@@ -1210,6 +1328,26 @@ struct SessionState {
     wall: Option<Vec<u8>>,
     /// Backtick commands to run.
     backtick: Vec<DaemonBacktick>,
+    /// Message display time in seconds.
+    msgwait: u32,
+    /// Minimum message wait time.
+    msgminwait: u32,
+    /// Zombie keep-alive command.
+    zombie_cmd: Option<Vec<u8>>,
+    /// Session name for reattach.
+    sessionname: Option<Vec<u8>>,
+    /// Session password.
+    password: Option<Vec<u8>>,
+    /// Runtime setenv commands (applied to new windows).
+    runtime_env: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Runtime unsetenv commands.
+    runtime_unset: Vec<Vec<u8>>,
+    /// Copy mode mark key bindings.
+    markkeys: Option<Vec<u8>>,
+    /// Multi-user mode enabled.
+    multiuser: bool,
+    /// ACL entries for multi-user access.
+    acl: Vec<AclEntry>,
 }
 
 #[derive(Debug, Clone)]
@@ -1286,6 +1424,16 @@ impl SessionState {
             zmodem: false,
             wall: None,
             backtick: Vec::new(),
+            msgwait: 5,
+            msgminwait: 1,
+            zombie_cmd: None,
+            sessionname: None,
+            password: None,
+            runtime_env: Vec::new(),
+            runtime_unset: Vec::new(),
+            markkeys: None,
+            multiuser: false,
+            acl: Vec::new(),
         }
     }
 
@@ -1532,6 +1680,21 @@ impl SessionState {
             SystemTime::now(),
         )
     }
+
+    /// Check if a new attach is allowed in multi-user mode.
+    /// Returns Some(permissions) if allowed, None if denied.
+    fn allow_attach(&self) -> Option<AclPermissions> {
+        if !self.multiuser {
+            return Some(AclPermissions::default());
+        }
+        // In multi-user mode, require at least one ACL entry
+        if self.acl.is_empty() {
+            return None;
+        }
+        // For now, allow any authenticated user with ACL entries present
+        // Full implementation would verify credentials against ACL entries
+        Some(self.acl.first()?.permissions)
+    }
 }
 
 impl ManagedWindow {
@@ -1647,23 +1810,139 @@ fn broadcast_region_layout(
     session: &SessionState,
     clients: &mut Vec<AttachedClient>,
 ) -> Result<(), DaemonError> {
-    if !session.regions.is_empty() {
-        let layout: Vec<(u32, u16, u16, bool)> = session
-            .regions
-            .iter()
-            .enumerate()
-            .filter_map(|(i, r)| {
-                session
-                    .windows
-                    .get(r.window_idx)
-                    .map(|w| (w.number, r.top, r.height, i == session.focused_region))
-            })
-            .collect();
-        if !layout.is_empty() {
-            broadcast(clients, &Message::RegionLayout(layout))?;
+    // When regions are active, render composite view for all clients
+    if session.regions.len() <= 1 {
+        // Also send region layout metadata for status display
+        if !session.regions.is_empty() {
+            let layout: Vec<(u32, u16, u16, bool)> = session
+                .regions
+                .iter()
+                .enumerate()
+                .filter_map(|(i, r)| {
+                    session
+                        .windows
+                        .get(r.window_idx)
+                        .map(|w| (w.number, r.top, r.height, i == session.focused_region))
+                })
+                .collect();
+            if !layout.is_empty() {
+                broadcast(clients, &Message::RegionLayout(layout))?;
+            }
         }
+        return Ok(());
+    }
+    // Render composite and send to all clients
+    let composite = composite_regions(session);
+    broadcast(clients, &Message::PtyOutput(composite))?;
+    // Also send region layout metadata
+    let layout: Vec<(u32, u16, u16, bool)> = session
+        .regions
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| {
+            session
+                .windows
+                .get(r.window_idx)
+                .map(|w| (w.number, r.top, r.height, i == session.focused_region))
+        })
+        .collect();
+    if !layout.is_empty() {
+        broadcast(clients, &Message::RegionLayout(layout))?;
     }
     Ok(())
+}
+
+/// Render all regions into a composite terminal frame.
+fn composite_regions(session: &SessionState) -> Vec<u8> {
+    if session.regions.is_empty() {
+        return Vec::new();
+    }
+
+    let total_cols = session
+        .windows
+        .iter()
+        .find(|_| true)
+        .map(|w| w.terminal.dimensions.columns)
+        .unwrap_or(80);
+
+    let mut output = Vec::new();
+    // Hide cursor, clear screen
+    output.extend_from_slice(b"\x1b[?25l\x1b[H\x1b[J");
+
+    for (i, region) in session.regions.iter().enumerate() {
+        if let Some(window) = session.windows.get(region.window_idx) {
+            let rows = window.terminal.dimensions.rows;
+            let region_height = region.height.min(rows);
+
+            for row in 0..region_height {
+                let screen_row = region.top + row;
+                // Position cursor to this row
+                output.extend_from_slice(b"\x1b[");
+                write_usize_buffer(&mut output, screen_row as usize + 1);
+                output.extend_from_slice(b";1H");
+
+                // Draw the row content
+                if let Some(line) = window.terminal.line_bytes(row) {
+                    output.extend_from_slice(&line);
+                }
+                // Clear to end of line
+                output.extend_from_slice(b"\x1b[K");
+            }
+
+            // Clear any remaining rows in this region (if terminal is smaller than region)
+            for row in rows..region.height {
+                let screen_row = region.top + row;
+                output.extend_from_slice(b"\x1b[");
+                write_usize_buffer(&mut output, screen_row as usize + 1);
+                output.extend_from_slice(b";1H\x1b[K");
+            }
+
+            // Draw separator line between regions
+            if i + 1 < session.regions.len() {
+                let sep_row = region.top + region.height;
+                output.extend_from_slice(b"\x1b[");
+                write_usize_buffer(&mut output, sep_row as usize + 1);
+                output.extend_from_slice(b";1H");
+                output.extend_from_slice(b"\x1b[7m");
+                output.extend(std::iter::repeat_n(b'-', total_cols as usize));
+                output.extend_from_slice(b"\x1b[0m");
+            }
+        }
+    }
+
+    // Show cursor at focused region's window cursor position
+    if let Some(region) = session.regions.get(session.focused_region)
+        && let Some(window) = session.windows.get(region.window_idx)
+    {
+        let cursor_col = window.terminal.cursor.column + 1;
+        let cursor_row = region.top + window.terminal.cursor.row + 1;
+        output.extend_from_slice(b"\x1b[");
+        write_usize_buffer(&mut output, cursor_row as usize);
+        output.push(b';');
+        write_usize_buffer(&mut output, cursor_col as usize);
+        output.push(b'H');
+    }
+    output.extend_from_slice(b"\x1b[?25h");
+
+    output
+}
+
+fn write_usize_buffer(output: &mut Vec<u8>, n: usize) {
+    if n == 0 {
+        output.push(b'0');
+        return;
+    }
+    let mut num = n;
+    let mut digits: [u8; 20] = [0; 20];
+    let mut pos = 0;
+    while num > 0 {
+        digits[pos] = (num % 10) as u8 + b'0';
+        pos += 1;
+        num /= 10;
+    }
+    for i in (0..pos).rev() {
+        output.push(digits[i]);
+    }
 }
 
 fn send_copy_cursor(
@@ -1842,6 +2121,17 @@ fn accept_connections(
                 // Process the actual command
                 match Message::read_from(&mut stream) {
                     Ok(Message::Attach) => {
+                        // ACL check for multi-user mode
+                        if session.multiuser {
+                            let perms = session.allow_attach();
+                            if perms.is_none() {
+                                write_protocol_error(
+                                    &mut stream,
+                                    "access denied: multiuser requires ACL entry".into(),
+                                )?;
+                                continue;
+                            }
+                        }
                         // Full attach - add to clients list
                         // Send a grid redraw so the client sees current terminal state
                         if let Some(window) = session.windows.get(session.selected) {
@@ -2647,6 +2937,132 @@ fn execute_command_string(
                             number: dead.number,
                         },
                     )?;
+                }
+            }
+        }
+        "msgwait" => {
+            if let Some(s) = parts.next()
+                && let Ok(n) = s.parse::<u32>()
+            {
+                session.msgwait = n;
+            }
+        }
+        "msgminwait" => {
+            if let Some(s) = parts.next()
+                && let Ok(n) = s.parse::<u32>()
+            {
+                session.msgminwait = n;
+            }
+        }
+        "maxwin" => {
+            if let Some(s) = parts.next()
+                && let Ok(n) = s.parse::<u32>()
+            {
+                session.maxwin = Some(n);
+            }
+        }
+        "zombie" => {
+            let args: Vec<&str> = parts.collect();
+            if !args.is_empty() {
+                session.zombie_cmd = Some(args.join(" ").into_bytes());
+            }
+        }
+        "setenv" => {
+            if let Some(var) = parts.next() {
+                let val = parts.clone().collect::<Vec<_>>().join(" ");
+                session
+                    .runtime_env
+                    .push((var.as_bytes().to_vec(), val.into_bytes()));
+            }
+        }
+        "unsetenv" => {
+            if let Some(var) = parts.next() {
+                session.runtime_unset.push(var.as_bytes().to_vec());
+            }
+        }
+        "sessionname" => {
+            if let Some(name) = parts.next() {
+                session.sessionname = Some(name.as_bytes().to_vec());
+            }
+        }
+        "password" => {
+            if let Some(pw) = parts.next() {
+                session.password = Some(pw.as_bytes().to_vec());
+            }
+        }
+        "exec" => {
+            // exec runs a command line — but we need CLI context.
+            // For now, spawn via create_window with the remaining args.
+            if let Some(program) = parts.next() {
+                let args: Vec<OsString> = parts.map(OsString::from).collect();
+                let size = session
+                    .windows
+                    .first()
+                    .map(|w| {
+                        PtySize::new(w.terminal.dimensions.columns, w.terminal.dimensions.rows)
+                    })
+                    .unwrap_or(PtySize::new(80, 24));
+                let sty = OsString::from("screen");
+                let term = OsString::from("screen");
+                let _ = session.create_window(
+                    &OsString::from(program),
+                    &args,
+                    size,
+                    &term,
+                    &sty,
+                    None,
+                    None,
+                );
+            }
+        }
+        "multiuser" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.multiuser = enable;
+        }
+        "acladd" => {
+            if let Some(username) = parts.next() {
+                let perms = parts
+                    .next()
+                    .map(AclPermissions::parse_perms)
+                    .unwrap_or_default();
+                let password = parts.next().map(|p| p.as_bytes().to_vec());
+                session.acl.push(AclEntry {
+                    username: username.as_bytes().to_vec(),
+                    permissions: perms,
+                    password,
+                });
+            }
+        }
+        "acldel" => {
+            if let Some(username) = parts.next() {
+                session.acl.retain(|e| e.username != username.as_bytes());
+            }
+        }
+        "aclchg" => {
+            if let Some(username) = parts.next()
+                && let Some(perm_str) = parts.next()
+            {
+                let (add, perm_spec) = if let Some(stripped) = perm_str.strip_prefix('+') {
+                    (true, stripped)
+                } else if let Some(stripped) = perm_str.strip_prefix('-') {
+                    (false, stripped)
+                } else {
+                    (false, perm_str)
+                };
+                let new_perms = AclPermissions::parse_perms(perm_spec);
+                if let Some(entry) = session
+                    .acl
+                    .iter_mut()
+                    .find(|e| e.username == username.as_bytes())
+                {
+                    if add {
+                        entry.permissions.0 |= new_perms.0;
+                    } else {
+                        entry.permissions.0 &= !new_perms.0;
+                        if perm_str == perm_spec {
+                            entry.permissions = new_perms;
+                        }
+                    }
                 }
             }
         }
