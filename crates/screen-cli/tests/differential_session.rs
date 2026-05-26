@@ -25,6 +25,10 @@ fn detached_session_lifecycle_compares_with_gnu_screen() {
         eprintln!("skipping differential lifecycle test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     let reference_result = run_lifecycle(
         Implementation::Reference,
@@ -67,6 +71,10 @@ fn attached_create_compares_with_gnu_screen() {
     let candidate_runtime = TempDir::new("attached-cand");
     if !unix_socket_bind_allowed(candidate_runtime.path()) {
         eprintln!("skipping differential attached create test: Unix socket bind is not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
         return;
     }
 
@@ -125,6 +133,10 @@ fn attach_or_create_create_branch_compares_with_gnu_screen() {
         );
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping differential attach-or-create create test: PTY allocation not available");
+        return;
+    }
 
     let reference_result = run_attach_or_create_create_case(
         Implementation::Reference,
@@ -175,6 +187,10 @@ fn detached_child_environment_compares_with_gnu_screen() {
     let candidate_runtime = TempDir::new("env-cand");
     if !unix_socket_bind_allowed(candidate_runtime.path()) {
         eprintln!("skipping differential environment test: Unix socket bind is not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
         return;
     }
 
@@ -234,6 +250,10 @@ fn detached_child_terminal_override_compares_with_gnu_screen() {
         );
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping differential terminal override test: PTY allocation not available");
+        return;
+    }
 
     let terminal = OsStr::new("screen-256color");
     let reference_result = run_child_environment_case(
@@ -290,6 +310,10 @@ fn remote_stuff_compares_with_gnu_screen() {
         eprintln!("skipping differential stuff test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     let reference_result = run_remote_stuff_case(
         Implementation::Reference,
@@ -339,6 +363,10 @@ fn session_listing_output_compares_with_gnu_screen() {
     let candidate_runtime = TempDir::new("list-cand");
     if !unix_socket_bind_allowed(candidate_runtime.path()) {
         eprintln!("skipping differential list test: Unix socket bind is not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
         return;
     }
 
@@ -481,6 +509,10 @@ fn session_listing_filter_compares_with_gnu_screen() {
         eprintln!("skipping differential list filter test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     start_detached_loop(&reference, reference_runtime.path(), "filtercase-a")
         .expect("reference filtered session A should start");
@@ -554,6 +586,10 @@ fn shell_option_uses_custom_shell_compares_with_gnu_screen() {
         eprintln!("skipping differential shell option test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     let reference_result = run_shell_option_case(&reference, reference_runtime.path(), "shellcase")
         .expect("reference shell option case should run");
@@ -588,6 +624,10 @@ fn compact_detached_create_options_compare_with_gnu_screen() {
     let candidate_runtime = TempDir::new("compact-cand");
     if !unix_socket_bind_allowed(candidate_runtime.path()) {
         eprintln!("skipping differential compact option test: Unix socket bind is not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
         return;
     }
 
@@ -628,6 +668,10 @@ fn config_file_shell_and_term_compare_with_gnu_screen() {
         eprintln!("skipping differential config file test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     let reference_result =
         run_config_shell_term_case(&reference, reference_runtime.path(), "configcase")
@@ -664,6 +708,10 @@ fn config_file_source_compares_with_gnu_screen() {
     let candidate_runtime = TempDir::new("source-cand");
     if !unix_socket_bind_allowed(candidate_runtime.path()) {
         eprintln!("skipping differential config source test: Unix socket bind is not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
         return;
     }
 
@@ -704,6 +752,10 @@ fn home_screenrc_compares_with_gnu_screen() {
         eprintln!("skipping differential home .screenrc test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     let reference_result =
         run_home_screenrc_case(&reference, reference_runtime.path(), "homescreenrccase")
@@ -740,6 +792,10 @@ fn config_file_chdir_compares_with_gnu_screen() {
     let candidate_runtime = TempDir::new("chdir-cand");
     if !unix_socket_bind_allowed(candidate_runtime.path()) {
         eprintln!("skipping differential chdir config test: Unix socket bind is not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
         return;
     }
 
@@ -780,6 +836,10 @@ fn screenrc_env_logging_commands_compare_with_gnu_screen() {
         eprintln!("skipping differential SCREENRC logging test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     let reference_log =
         run_screenrc_logging_case(&reference, reference_runtime.path(), "screenrclogcase")
@@ -812,6 +872,10 @@ fn logging_option_compares_with_gnu_screen() {
         eprintln!("skipping differential logging test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     let reference_log = run_logging_case(&reference, reference_runtime.path(), "logcase")
         .expect("reference logging case should run");
@@ -840,6 +904,10 @@ fn multi_window_create_and_kill_compares_with_gnu_screen() {
     let candidate_runtime = TempDir::new("mw-cand");
     if !unix_socket_bind_allowed(candidate_runtime.path()) {
         eprintln!("skipping multi-window differential test: Unix socket bind is not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
         return;
     }
 
@@ -1105,6 +1173,10 @@ fn window_select_compares_with_gnu_screen() {
         eprintln!("skipping window-select differential test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     let reference_result = run_select_case(
         Implementation::Reference,
@@ -1296,6 +1368,10 @@ fn zombie_and_renumber_compares_with_gnu_screen() {
     let candidate_runtime = TempDir::new("zr-cand");
     if !unix_socket_bind_allowed(candidate_runtime.path()) {
         eprintln!("skipping zombie+renumber test: Unix socket bind not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping zombie+renumber test: PTY allocation not available");
         return;
     }
 

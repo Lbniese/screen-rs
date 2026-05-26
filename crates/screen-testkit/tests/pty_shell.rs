@@ -4,8 +4,18 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use screen_pty::{PtyCommand, PtyProcess, PtySize};
 use screen_testkit::PtyTestProcess;
 
+macro_rules! skip_if_no_pty {
+    () => {
+        if !screen_pty::pty_available() {
+            eprintln!("skipping PTY test: PTY allocation not available on this system");
+            return;
+        }
+    };
+}
+
 #[test]
 fn shell_can_be_driven_through_pty() {
+    skip_if_no_pty!();
     let mut process =
         PtyProcess::spawn("/bin/sh", std::iter::empty::<&str>(), PtySize::new(80, 24))
             .expect("spawn shell through PTY");
@@ -50,6 +60,7 @@ fn shell_can_be_driven_through_pty() {
 
 #[test]
 fn resize_delivers_sigwinch_to_child() {
+    skip_if_no_pty!();
     let mut shell = PtyTestProcess::spawn(
         "/bin/sh",
         [
@@ -82,6 +93,7 @@ fn resize_delivers_sigwinch_to_child() {
 
 #[test]
 fn pty_command_honors_current_dir() {
+    skip_if_no_pty!();
     let temp = std::env::temp_dir().join(format!(
         "screen-rs-pty-cwd-{}-{}",
         std::process::id(),

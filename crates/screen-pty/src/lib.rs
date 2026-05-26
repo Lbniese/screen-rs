@@ -310,6 +310,12 @@ impl PtyPair {
     }
 }
 
+/// Quick probe: try to open a PTY pair and immediately drop it.
+/// Returns true if PTY allocation is available on this system.
+pub fn pty_available() -> bool {
+    PtyPair::open(PtySize::new(80, 24)).is_ok()
+}
+
 fn configure_child_pty(slave_fd: RawFd) -> io::Result<()> {
     // SAFETY: `setsid` has no pointer arguments and is called in the child just
     // before exec to create a new session for the PTY-controlled process.

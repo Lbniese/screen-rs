@@ -18,6 +18,10 @@ fn detached_session_lists_attaches_and_quits() {
         eprintln!("skipping detached session lifecycle test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     let session_name = "e2e";
     let _guard = SessionGuard {
@@ -101,6 +105,10 @@ fn interactive_attach_detaches_and_reattaches() {
     let temp = TempDir::new("interactive");
     if !unix_socket_bind_allowed(temp.path()) {
         eprintln!("skipping interactive detach test: Unix socket bind is not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
         return;
     }
 
@@ -201,6 +209,10 @@ fn attached_create_runs_command_and_exits() {
         eprintln!("skipping attached create test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     let session_name = "attached-create";
     let _guard = SessionGuard {
@@ -248,6 +260,10 @@ fn attached_create_detaches_and_reattaches() {
     let temp = TempDir::new("attached-detach");
     if !unix_socket_bind_allowed(temp.path()) {
         eprintln!("skipping attached create detach test: Unix socket bind is not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
         return;
     }
 
@@ -336,6 +352,10 @@ fn attach_or_create_creates_missing_session() {
         eprintln!("skipping attach-or-create create test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
+        return;
+    }
 
     let session_name = "attach-or-create-new";
     let shell_path = temp.path().join("rr-shell");
@@ -382,6 +402,10 @@ fn attach_or_create_attaches_existing_session() {
     let temp = TempDir::new("attach-or-create-existing");
     if !unix_socket_bind_allowed(temp.path()) {
         eprintln!("skipping attach-or-create attach test: Unix socket bind is not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping test: PTY allocation not available on this system");
         return;
     }
 
