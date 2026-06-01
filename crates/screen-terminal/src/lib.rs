@@ -1,5 +1,106 @@
 #![forbid(unsafe_code)]
 
+/// Determine the number of bytes in a UTF-8 sequence from the lead byte.
+fn utf8_sequence_len(lead: u8) -> usize {
+    if lead & 0x80 == 0 {
+        1
+    } else if lead & 0xE0 == 0xC0 {
+        2
+    } else if lead & 0xF0 == 0xE0 {
+        3
+    } else {
+        4
+    }
+}
+
+/// Returns 1 for most characters, 2 for CJK/wide characters, 0 for combining marks.
+fn unicode_width(bytes: &[u8]) -> u8 {
+    // Decode first codepoint
+    let cp = match std::str::from_utf8(bytes) {
+        Ok(s) => s.chars().next(),
+        Err(_) => return 1,
+    };
+    let Some(c) = cp else { return 1 };
+    match c {
+        // CJK Unified Ideographs and extensions
+        '\u{1100}'..='\u{115F}'   // Hangul Jamo
+        | '\u{2329}'..='\u{232A}' // Angle brackets
+        | '\u{2E80}'..='\u{303E}' // CJK Radicals
+        | '\u{3040}'..='\u{33BF}' // Hiragana, Katakana, Bopomofo, Hangul, CJK Misc
+        | '\u{3400}'..='\u{4DBF}' // CJK Unified Ideographs Ext A
+        | '\u{4E00}'..='\u{A4CF}' // CJK Unified Ideographs + Yi
+        | '\u{AC00}'..='\u{D7A3}' // Hangul Syllables
+        | '\u{F900}'..='\u{FAFF}' // CJK Compatibility Ideographs
+        | '\u{FE10}'..='\u{FE19}' // Vertical forms
+        | '\u{FE30}'..='\u{FE6F}' // CJK Compatibility Forms
+        | '\u{FF01}'..='\u{FF60}' // Fullwidth Forms
+        | '\u{FFE0}'..='\u{FFE6}' // Fullwidth Signs
+        | '\u{1F300}'..='\u{1F9FF}' // Emoji & Misc Symbols
+        | '\u{20000}'..='\u{2FFFD}' // CJK Ext B+
+        | '\u{30000}'..='\u{3FFFD}' // CJK Ext G+
+        => 2,
+        // Combining marks, zero-width
+        '\u{0300}'..='\u{036F}'   // Combining diacritics
+        | '\u{0483}'..='\u{0489}'
+        | '\u{0591}'..='\u{05BD}'
+        | '\u{0610}'..='\u{061A}'
+        | '\u{064B}'..='\u{065F}'
+        | '\u{0670}'
+        | '\u{06D6}'..='\u{06DC}'
+        | '\u{200B}'..='\u{200F}' // Zero-width space, LRM, RLM
+        | '\u{2028}'..='\u{2029}' // Line/paragraph separators
+        | '\u{202A}'..='\u{202E}' // Bidi controls
+        | '\u{2060}'..='\u{2064}' // Word joiner, invisible operators
+        | '\u{FE00}'..='\u{FE0F}' // Variation selectors
+        | '\u{FEFF}'               // BOM / ZWNBSP
+        => 0,
+        _ => 1,
+    }
+}
+
+/// DEC Special Graphics character set mapping for line-drawing.
+/// Maps ASCII bytes to Unicode line-drawing characters when G0 charset is '0'.
+fn dec_special_graphics(byte: u8) -> Vec<u8> {
+    let ch: char = match byte {
+        b'`' => '◆', // diamond
+        b'a' => '▒', // checkerboard
+        b'b' => '␉', // horizontal tab symbol
+        b'c' => '␌', // form feed symbol
+        b'd' => '␍', // carriage return symbol
+        b'e' => '␊', // line feed symbol
+        b'f' => '°', // degree
+        b'g' => '±', // plus/minus
+        b'h' => '␤', // newline symbol
+        b'i' => '␋', // vertical tab symbol
+        b'j' => '┘', // lower-right corner
+        b'k' => '┐', // upper-right corner
+        b'l' => '┌', // upper-left corner
+        b'm' => '└', // lower-left corner
+        b'n' => '┼', // cross
+        b'o' => '⎺', // horizontal scan 1 (approximate)
+        b'p' => '⎺', // horizontal scan 3
+        b'q' => '─', // horizontal line
+        b'r' => '⎼', // horizontal scan 7
+        b's' => '⎽', // horizontal scan 9
+        b't' => '├', // left T
+        b'u' => '┤', // right T
+        b'v' => '┴', // bottom T
+        b'w' => '┬', // top T
+        b'x' => '│', // vertical line
+        b'y' => '≤', // less/equal
+        b'z' => '≥', // greater/equal
+        b'{' => 'π', // pi
+        b'|' => '≠', // not equal
+        b'}' => '£', // pound
+        b'~' => '·', // centered dot
+        _ => return vec![byte],
+    };
+    // Encode as UTF-8
+    let mut buf = [0u8; 4];
+    let encoded = ch.encode_utf8(&mut buf);
+    encoded.as_bytes().to_vec()
+}
+
 // ---------------------------------------------------------------------------
 // Geometry
 // ---------------------------------------------------------------------------
@@ -67,6 +168,8 @@ pub struct Style {
 pub struct Cell {
     pub bytes: Vec<u8>,
     pub style: Style,
+    /// 0 = continuation of wide char, 1 = normal, 2 = wide start
+    pub width: u8,
 }
 
 impl Cell {
@@ -74,11 +177,17 @@ impl Cell {
         Self {
             bytes: Vec::new(),
             style,
+            width: 1,
         }
     }
 
     pub fn is_blank(&self) -> bool {
         self.bytes.is_empty()
+    }
+
+    /// True if this cell is a continuation of a wide character (width 0)
+    pub fn is_continuation(&self) -> bool {
+        self.width == 0
     }
 }
 
@@ -228,6 +337,10 @@ impl Grid {
         let mut bytes = Vec::new();
         for column in 0..self.columns {
             let cell = &self.cells[self.index(column, row)];
+            if cell.is_continuation() {
+                // Wide-char continuation: skip
+                continue;
+            }
             if cell.is_blank() {
                 bytes.push(b' ');
             } else {
@@ -288,8 +401,8 @@ struct Modes {
     application_keypad: bool,
     /// Bracketed paste.
     bracketed_paste: bool,
-    /// Mouse tracking mode (SGR extended / 1006).
-    mouse_sgr: bool,
+    /// Mouse tracking mode.
+    mouse_mode: MouseMode,
     /// Auto-wrap (DECAWM).
     auto_wrap: bool,
     /// Reverse video (DECSCNM).
@@ -298,6 +411,23 @@ struct Modes {
     show_cursor: bool,
     /// Cursor shape (DECSCUSR).
     cursor_style: CursorStyle,
+}
+
+/// Mouse tracking modes (DECSET 9, 1000, 1002, 1003, 1006).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MouseMode {
+    #[default]
+    Off,
+    /// X10: button press only (mode 9)
+    X10,
+    /// Normal tracking: press + release (mode 1000)
+    Normal,
+    /// Button-event tracking (mode 1002)
+    ButtonEvent,
+    /// Any-event tracking (mode 1003)
+    AnyEvent,
+    /// SGR extended mouse (mode 1006)
+    Sgr,
 }
 
 impl Modes {
@@ -333,6 +463,13 @@ pub struct TerminalState {
     scrollback_max: u32,
     /// Accumulated escape sequence responses to write back to pty.
     response_buffer: Vec<u8>,
+    /// G0/G1 charset designator (b'B' = US ASCII, b'0' = DEC Special Graphics)
+    g0_charset: u8,
+    g1_charset: u8,
+    g0_charset_pending: bool,
+    g1_charset_pending: bool,
+    /// Set to true when BEL (0x07) is received; consumer resets with [`take_bell`].
+    bell_occurred: bool,
 }
 
 impl TerminalState {
@@ -356,6 +493,11 @@ impl TerminalState {
             scrollback: Vec::new(),
             scrollback_max: 1000,
             response_buffer: Vec::new(),
+            g0_charset: b'B',
+            g1_charset: b'B',
+            g0_charset_pending: false,
+            g1_charset_pending: false,
+            bell_occurred: false,
         }
     }
 
@@ -383,6 +525,10 @@ impl TerminalState {
         let line = &self.scrollback[self.scrollback.len() - 1 - index];
         let mut bytes = Vec::new();
         for cell in line {
+            if cell.is_continuation() {
+                // Wide-char continuation: skip
+                continue;
+            }
             if cell.is_blank() {
                 bytes.push(b' ');
             } else {
@@ -453,6 +599,18 @@ impl TerminalState {
         self.current_style
     }
 
+    /// Whether mouse reporting is enabled (any mode).
+    pub fn mouse_mode(&self) -> MouseMode {
+        self.modes.mouse_mode
+    }
+
+    /// Consume and return whether a bell has occurred since the last call.
+    pub fn take_bell(&mut self) -> bool {
+        let occurred = self.bell_occurred;
+        self.bell_occurred = false;
+        occurred
+    }
+
     /// Resize the terminal, growing or shrinking grids.
     pub fn resize(&mut self, dimensions: Dimensions) {
         let dimensions = dimensions.normalized();
@@ -513,13 +671,111 @@ impl TerminalState {
             ParserState::Escape => self.apply_escape(byte),
             ParserState::Csi(mut csi) => self.apply_csi_byte(&mut csi, byte),
             ParserState::Osc(mut osc) => self.apply_osc_byte(&mut osc, byte),
+            ParserState::Utf8(mut buf) => self.apply_utf8_byte(&mut buf, byte),
         };
+    }
+
+    // -- utf8 state ---------------------------------------------------------
+
+    fn apply_utf8_byte(&mut self, buf: &mut Vec<u8>, byte: u8) -> ParserState {
+        // Expect continuation bytes (0x80-0xBF)
+        if (0x80..=0xbf).contains(&byte) {
+            buf.push(byte);
+            // Check if we have enough bytes
+            let expected = utf8_sequence_len(buf[0]);
+            if buf.len() == expected {
+                // Complete UTF-8 sequence — write as single cell
+                let width = unicode_width(buf);
+                let sequence = std::mem::take(buf);
+                self.put_utf8(&sequence, width);
+                return ParserState::Ground;
+            }
+            if buf.len() > expected {
+                // Overlong or unexpected: emit what we have as individual bytes
+                for &b in buf.iter() {
+                    self.put_byte(b);
+                }
+                buf.clear();
+                return self.apply_ground(byte);
+            }
+            return ParserState::Utf8(buf.clone());
+        }
+        // Unexpected byte in UTF-8 sequence: flush buffer as individual bytes,
+        // then process this byte from ground
+        for &b in buf.iter() {
+            self.put_byte(b);
+        }
+        buf.clear();
+        self.apply_ground(byte)
+    }
+
+    fn put_utf8(&mut self, bytes: &[u8], width: u8) {
+        let insert = self.modes.insert;
+        let col = self.cursor.column;
+        let row = self.cursor.row;
+        let auto_wrap = self.modes.auto_wrap;
+        let max_col = self.dimensions.columns;
+        let style = self.current_style;
+        let grid = self.grid_mut();
+
+        let w = width.max(1) as u16;
+        if insert {
+            grid.insert_cells(col, row, w, style);
+        }
+        // Place the character in the first cell
+        grid.set_cell(
+            col,
+            row,
+            Cell {
+                bytes: bytes.to_vec(),
+                style,
+                width: w as u8,
+            },
+        );
+        // Mark additional cells as wide-continuation (zero-width)
+        for offset in 1..w {
+            let c = col + offset;
+            if c < max_col {
+                grid.set_cell(
+                    c,
+                    row,
+                    Cell {
+                        bytes: Vec::new(),
+                        style,
+                        width: 0,
+                    },
+                );
+            }
+        }
+        if col + w < max_col {
+            self.cursor.column = col + w;
+        } else if auto_wrap {
+            self.cursor.column = 0;
+            self.line_feed();
+        }
     }
 
     // -- ground state --------------------------------------------------------
 
     fn apply_ground(&mut self, byte: u8) -> ParserState {
+        // Handle pending charset designator
+        if self.g0_charset_pending {
+            self.g0_charset_pending = false;
+            self.g0_charset = byte;
+            return ParserState::Ground;
+        }
+        if self.g1_charset_pending {
+            self.g1_charset_pending = false;
+            self.g1_charset = byte;
+            return ParserState::Ground;
+        }
+
         match byte {
+            b'\x07' => {
+                // BEL – bell: set flag, don't render
+                self.bell_occurred = true;
+                ParserState::Ground
+            }
             b'\x1b' => ParserState::Escape,
             b'\r' => {
                 self.cursor.column = 0;
@@ -537,11 +793,23 @@ impl TerminalState {
                 self.horizontal_tab();
                 ParserState::Ground
             }
-            0x20..=0x7e | 0xa0..=0xff => {
+            0x20..=0x7e => {
                 self.put_byte(byte);
                 ParserState::Ground
             }
-            _ => ParserState::Ground,
+            // High byte 0x80-0xBF: unexpected continuation byte, treat as printable
+            0x80..=0xbf => {
+                self.put_byte(byte);
+                ParserState::Ground
+            }
+            // UTF-8 multi-byte start (2-byte: C0-DF, 3-byte: E0-EF, 4-byte: F0-F4)
+            0xc2..=0xf4 => ParserState::Utf8(vec![byte]),
+            // C0/C1 control bytes (0x80-0x9F, 0xA0+ already handled above)
+            // 0xC0, 0xC1, 0xF5-0xFF: invalid UTF-8 start bytes, treat as printable
+            _ => {
+                self.put_byte(byte);
+                ParserState::Ground
+            }
         }
     }
 
@@ -551,8 +819,16 @@ impl TerminalState {
         match byte {
             b'[' => ParserState::Csi(CsiState::default()),
             b']' => ParserState::Osc(OscState::default()),
-            b'(' => ParserState::Ground, // G0 charset select – ignored for now
-            b')' => ParserState::Ground, // G1 charset select
+            b'(' => {
+                // G0 charset select — next byte is the charset designator
+                self.g0_charset_pending = true;
+                ParserState::Ground
+            }
+            b')' => {
+                // G1 charset select — track for potential use
+                self.g1_charset_pending = true;
+                ParserState::Ground
+            }
             b'7' => {
                 self.saved_cursor = self.cursor;
                 self.saved_style = self.current_style;
@@ -561,6 +837,22 @@ impl TerminalState {
             b'8' => {
                 self.cursor = self.clamp_cursor(self.saved_cursor);
                 self.current_style = self.saved_style;
+                ParserState::Ground
+            }
+            b'D' => {
+                // IND – index: move down, scroll at bottom margin
+                self.index_down();
+                ParserState::Ground
+            }
+            b'E' => {
+                // NEL – next line: CR + LF
+                self.cursor.column = 0;
+                self.line_feed();
+                ParserState::Ground
+            }
+            b'M' => {
+                // RI – reverse index: move up, scroll at top margin
+                self.reverse_index();
                 ParserState::Ground
             }
             b'c' => {
@@ -723,20 +1015,20 @@ impl TerminalState {
                 for p in params {
                     let value = p.unwrap_or(0);
                     match value {
-                        1 => self.modes.application_cursor = true, // DECCKM
-                        6 => self.modes.origin = true,             // DECOM
-                        7 => self.modes.auto_wrap = true,          // DECAWM
-                        9 => {}                                    // X10 mouse – ignored
-                        12 => {}                                   // send/receive (SRM) – ignored
-                        25 => self.modes.show_cursor = true,       // DECTCEM
-                        47 => self.use_alternate_screen(true),     // alt screen
-                        1000 => {}                                 // xterm mouse tracking – ignored
-                        1002 => {}                                 // cell motion tracking – ignored
-                        1003 => {}                                 // all motion tracking – ignored
-                        1004 => {}                                 // focus tracking – ignored
-                        1005 => {}                                 // utf-8 mouse – ignored
-                        1006 => self.modes.mouse_sgr = true,       // SGR mouse
-                        1047 => self.use_alternate_screen(true),   // alt screen (xterm)
+                        1 => self.modes.application_cursor = true,   // DECCKM
+                        6 => self.modes.origin = true,               // DECOM
+                        7 => self.modes.auto_wrap = true,            // DECAWM
+                        9 => self.modes.mouse_mode = MouseMode::X10, // X10 mouse
+                        12 => {}                                     // send/receive (SRM) – ignored
+                        25 => self.modes.show_cursor = true,         // DECTCEM
+                        47 => self.use_alternate_screen(true),       // alt screen
+                        1000 => self.modes.mouse_mode = MouseMode::Normal, // normal tracking
+                        1002 => self.modes.mouse_mode = MouseMode::ButtonEvent,
+                        1003 => self.modes.mouse_mode = MouseMode::AnyEvent, // any-event tracking
+                        1004 => {} // focus tracking – ignored
+                        1005 => self.modes.mouse_mode = MouseMode::Normal, // utf-8 mouse
+                        1006 => self.modes.mouse_mode = MouseMode::Sgr, // SGR extended
+                        1047 => self.use_alternate_screen(true), // alt screen (xterm)
                         1048 => {
                             // Save cursor (associated with 1047/1049)
                             self.saved_cursor = self.cursor;
@@ -762,12 +1054,9 @@ impl TerminalState {
                         7 => self.modes.auto_wrap = false,          // DECAWM
                         25 => self.modes.show_cursor = false,       // DECTCEM
                         47 => self.use_alternate_screen(false),     // alt screen
-                        1000 => {}
-                        1002 => {}
-                        1003 => {}
-                        1004 => {}
-                        1005 => {}
-                        1006 => self.modes.mouse_sgr = false,
+                        9 | 1000 | 1002 | 1003 | 1005 | 1006 => {
+                            self.modes.mouse_mode = MouseMode::Off;
+                        }
                         1047 => self.use_alternate_screen(false),
                         1049 => self.use_alternate_screen(false),
                         2004 => self.modes.bracketed_paste = false,
@@ -1103,6 +1392,13 @@ impl TerminalState {
     // -- character output ----------------------------------------------------
 
     fn put_byte(&mut self, byte: u8) {
+        // Translate DEC Special Graphics (line-drawing) characters when G0 is '0'
+        let translated = if self.g0_charset == b'0' {
+            dec_special_graphics(byte)
+        } else {
+            vec![byte]
+        };
+
         let insert = self.modes.insert;
         let col = self.cursor.column;
         let row = self.cursor.row;
@@ -1118,8 +1414,9 @@ impl TerminalState {
             col,
             row,
             Cell {
-                bytes: vec![byte],
+                bytes: translated,
                 style,
+                width: 1,
             },
         );
         if col + 1 < max_col {
@@ -1144,6 +1441,23 @@ impl TerminalState {
             let style = self.current_style;
             self.capture_scrollback(top, 1);
             self.grid_mut().scroll_up(top, bottom, 1, style);
+        }
+    }
+
+    /// IND – index down: move cursor down, scroll up at bottom margin.
+    fn index_down(&mut self) {
+        self.line_feed();
+    }
+
+    /// RI – reverse index: move cursor up, scroll down at top margin.
+    fn reverse_index(&mut self) {
+        let top = self.margins.top;
+        if self.cursor.row > top {
+            self.cursor.row -= 1;
+        } else {
+            let bottom = self.margins.bottom;
+            let style = self.current_style;
+            self.grid_mut().scroll_down(top, bottom, 1, style);
         }
     }
 
@@ -1252,6 +1566,7 @@ enum ParserState {
     Escape,
     Csi(CsiState),
     Osc(OscState),
+    Utf8(Vec<u8>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1820,5 +2135,167 @@ mod tests {
         terminal.apply(b"\x1b[38:5:196m"); // colon-delimited (not supported, should be safe)
         // No panics
         assert!(terminal.cursor.row < terminal.dimensions.rows);
+    }
+
+    // -- UTF-8 handling ------------------------------------------------------
+
+    #[test]
+    fn utf8_ascii_still_works() {
+        let mut terminal = state(40, 10);
+        terminal.apply(b"hello");
+        let line = terminal.line_bytes(0).unwrap();
+        assert_eq!(line, b"hello");
+    }
+
+    #[test]
+    fn utf8_two_byte_sequence() {
+        // Latin-1 supplement: é = 0xC3 0xA9
+        let mut terminal = state(40, 10);
+        terminal.apply(b"\xC3\xA9"); // é
+        let line = terminal.line_bytes(0).unwrap();
+        assert_eq!(
+            line, b"\xC3\xA9",
+            "multi-byte char should be stored as one cell"
+        );
+        // Cursor should advance by 1
+        assert_eq!(terminal.cursor.column, 1);
+    }
+
+    #[test]
+    fn utf8_three_byte_cjk() {
+        // CJK character: 日 = 0xE6 0x97 0xA5 (width 2)
+        let mut terminal = state(40, 10);
+        terminal.apply(b"\xE6\x97\xA5"); // 日
+        let line = terminal.line_bytes(0).unwrap();
+        assert_eq!(line, b"\xE6\x97\xA5");
+        // Cursor should advance by 2 for wide char
+        assert_eq!(terminal.cursor.column, 2);
+        // Cell at column 0 should have the bytes
+        let cell = terminal.cell_at(0, 0).unwrap();
+        assert_eq!(cell.bytes, b"\xE6\x97\xA5");
+        // Cell at column 1 should be blank (continuation of wide char)
+        let cell1 = terminal.cell_at(0, 1).unwrap();
+        assert!(cell1.is_blank());
+    }
+
+    #[test]
+    fn utf8_four_byte_emoji() {
+        // Emoji: 😀 = 0xF0 0x9F 0x98 0x80 (width 2)
+        let mut terminal = state(40, 10);
+        terminal.apply(b"\xF0\x9F\x98\x80");
+        let line = terminal.line_bytes(0).unwrap();
+        assert_eq!(line, b"\xF0\x9F\x98\x80");
+        // Emoji is wide (2 columns)
+        assert_eq!(terminal.cursor.column, 2);
+        let cell0 = terminal.cell_at(0, 0).unwrap();
+        assert!(!cell0.is_blank());
+        let cell1 = terminal.cell_at(0, 1).unwrap();
+        assert!(
+            cell1.is_blank(),
+            "wide char continuation cell should be blank"
+        );
+    }
+
+    #[test]
+    fn utf8_mixed_ascii_and_cjk() {
+        let mut terminal = state(40, 10);
+        terminal.apply(b"hello\xE6\x97\xA5\xE6\x9C\xACworld"); // hello日本world
+        let line = terminal.line_bytes(0).unwrap();
+        assert_eq!(line, b"hello\xE6\x97\xA5\xE6\x9C\xACworld");
+        // hello(5) + 日(2 wide) + 本(2 wide) + world(5) = 14
+        assert_eq!(terminal.cursor.column, 14);
+    }
+
+    #[test]
+    fn utf8_invalid_sequence_recovers() {
+        // Invalid: continuation byte without lead byte
+        let mut terminal = state(40, 10);
+        terminal.apply(b"\x80\xBF");
+        // Should not panic, treated as individual bytes
+        assert!(terminal.cursor.column <= 40);
+        assert!(terminal.cursor.row < 10);
+    }
+
+    #[test]
+    fn utf8_interrupted_sequence_flushes() {
+        let mut terminal = state(40, 10);
+        // Start a 3-byte sequence but interrupt with ASCII
+        terminal.apply(b"\xE6x");
+        // Should leave the incomplete bytes and the x
+        let line = terminal.line_bytes(0).unwrap();
+        // The 0xE6 is flushed as individual byte, then x is added
+        assert_eq!(line.len(), 2);
+    }
+
+    #[test]
+    fn utf8_no_panic_on_all_byte_values() {
+        let mut terminal = state(80, 24);
+        // Feed every possible byte value through the UTF-8 state machine
+        for byte in 0u8..=255 {
+            terminal.apply(&[byte]);
+            terminal.apply(&[byte, byte]); // also try pairs
+        }
+        // Should not panic
+        assert!(
+            terminal.cursor.column < terminal.dimensions.columns
+                || terminal.cursor.row < terminal.dimensions.rows - 1
+        );
+    }
+
+    // -- IND / NEL / RI -----------------------------------------------------
+
+    #[test]
+    fn ind_moves_cursor_down() {
+        let mut terminal = state(10, 5);
+        terminal.apply(b"\x1bD"); // IND
+        assert_eq!(terminal.cursor.row, 1);
+        assert_eq!(terminal.cursor.column, 0);
+    }
+
+    #[test]
+    fn ind_scrolls_at_bottom_margin() {
+        let mut terminal = state(10, 5);
+        terminal.apply(b"\x1b[1;3r"); // margins: top=0, bottom=2
+        terminal.apply(b"\x1b[3;1H"); // cursor to row 2 (bottom margin, 0-indexed)
+        terminal.apply(b"ABC");
+        assert_eq!(terminal.line_bytes(2), Some(b"ABC".to_vec()));
+        terminal.apply(b"\x1bD"); // IND at bottom -> scroll up within margins
+        assert_eq!(terminal.cursor.row, 2); // cursor stays at bottom
+        // Row 1 should have ABC (scrolled up from row 2)
+        assert_eq!(terminal.line_bytes(1), Some(b"ABC".to_vec()));
+        // Row 2 should now be blank
+        assert_eq!(terminal.line_bytes(2), Some(Vec::new()));
+    }
+
+    #[test]
+    fn nel_cr_then_lf() {
+        let mut terminal = state(10, 5);
+        terminal.apply(b"\x1b[1;5H"); // col 4
+        terminal.apply(b"\x1bE"); // NEL
+        assert_eq!(terminal.cursor, Cursor { column: 0, row: 1 });
+    }
+
+    #[test]
+    fn ri_moves_cursor_up() {
+        let mut terminal = state(10, 5);
+        terminal.apply(b"\x1b[3;1H"); // row 2
+        terminal.apply(b"\x1bM"); // RI
+        assert_eq!(terminal.cursor.row, 1);
+        assert_eq!(terminal.cursor.column, 0);
+    }
+
+    #[test]
+    fn ri_scrolls_down_at_top_margin() {
+        let mut terminal = state(10, 5);
+        terminal.apply(b"\x1b[1;3r"); // margins: top=0, bottom=2
+        terminal.apply(b"\x1b[2;1H"); // cursor to row 1 (inside margins)
+        terminal.apply(b"MID");
+        terminal.apply(b"\x1b[H"); // cursor to row 0 (top margin)
+        terminal.apply(b"\x1bM"); // RI at top -> scroll down within margins
+        // MID should have shifted down to row 2
+        assert_eq!(terminal.line_bytes(2), Some(b"MID".to_vec()));
+        // Row 0 should be blank after scroll down
+        assert_eq!(terminal.line_bytes(0), Some(Vec::new()));
+        assert_eq!(terminal.cursor.row, 0);
     }
 }
