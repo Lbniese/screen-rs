@@ -26,6 +26,7 @@ pub fn expand_hardstatus(
     active_title: &[u8],
     windows: &[WindowInfo],
     now: SystemTime,
+    terminal_width: usize,
 ) -> Vec<u8> {
     let host = hostname();
     let mut out = Vec::with_capacity(format.len() + 32);
@@ -65,16 +66,45 @@ pub fn expand_hardstatus(
                     }
                 }
                 b'?' => {
-                    // skip conditional branches entirely (simplified: just skip to end)
-                    // Count depth: %? opens, %: branches, and %? closes at matching %?
-                    // Simpler approach: just consume until we hit a balancing
-                    // Actually, just skip to the next non-nested %? at depth 0
-                    while let Some(c) = chars.next() {
-                        if c == b'%'
-                            && let Some(b':') = chars.clone().next()
-                        {
-                            chars.next();
+                    // Conditional %? … %? — simplified: skip entire construct
+                    // Format: %?<cond>%:<true>%? or %?<cond>%:<true>%:<false>%?
+                    // We just consume until the matching %? terminator.
+                    let mut depth: u32 = 1;
+                    while depth > 0 {
+                        let Some(c) = chars.next() else {
                             break;
+                        };
+                        if c == b'%' {
+                            let Some(next) = chars.next() else {
+                                break;
+                            };
+                            match next {
+                                b'?' => depth += 1,
+                                b':' if depth == 1 => {
+                                    // Separator: skip the true branch content
+                                    // Continue consuming until the closing %?
+                                    while depth > 0 {
+                                        let Some(cc) = chars.next() else {
+                                            break;
+                                        };
+                                        if cc == b'%' {
+                                            let Some(nn) = chars.next() else {
+                                                break;
+                                            };
+                                            match nn {
+                                                b'?' => depth -= 1,
+                                                b':' if depth == 1 => {
+                                                    // false branch found; already
+                                                    // consuming, this is just another
+                                                    // separator within the skip
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -92,7 +122,6 @@ pub fn expand_hardstatus(
     if let Some(split) = right_index {
         let left = &out[..split];
         let right = &out[split..];
-        let terminal_width = 80usize; // TODO: get from terminal dimensions
         let left_len = left.len();
         let right_len = right.len();
         if left_len + right_len < terminal_width {
@@ -203,13 +232,13 @@ mod tests {
 
     #[test]
     fn hostname_expands() {
-        let result = expand_hardstatus(b"%H", 0, b"", &[], test_time());
+        let result = expand_hardstatus(b"%H", 0, b"", &[], test_time(), 80);
         assert!(!result.is_empty());
     }
 
     #[test]
     fn datetime_expands() {
-        let result = expand_hardstatus(b"%d/%m/%Y %c", 0, b"", &[], test_time());
+        let result = expand_hardstatus(b"%d/%m/%Y %c", 0, b"", &[], test_time(), 80);
         let s = String::from_utf8_lossy(&result);
         assert!(s.contains("/2025"), "{s}");
         assert!(s.contains("14:30"), "{s}");
@@ -229,20 +258,20 @@ mod tests {
                 title: b"htop".to_vec(),
             },
         ];
-        let result = expand_hardstatus(b"%w", 1, b"", &wins, test_time());
+        let result = expand_hardstatus(b"%w", 1, b"", &wins, test_time(), 80);
         let s = String::from_utf8_lossy(&result);
         assert_eq!(s, "0- 1*");
     }
 
     #[test]
     fn literal_percent() {
-        let result = expand_hardstatus(b"100%%", 0, b"", &[], test_time());
+        let result = expand_hardstatus(b"100%%", 0, b"", &[], test_time(), 80);
         assert_eq!(String::from_utf8_lossy(&result), "100%");
     }
 
     #[test]
     fn right_align() {
-        let result = expand_hardstatus(b"left%=right", 0, b"", &[], test_time());
+        let result = expand_hardstatus(b"left%=right", 0, b"", &[], test_time(), 80);
         let s = String::from_utf8_lossy(&result);
         assert!(s.starts_with("left"));
         assert!(s.ends_with("right"));
@@ -251,13 +280,13 @@ mod tests {
 
     #[test]
     fn window_number_and_title() {
-        let result = expand_hardstatus(b"%n %t", 3, b"hello", &[], test_time());
+        let result = expand_hardstatus(b"%n %t", 3, b"hello", &[], test_time(), 80);
         assert_eq!(String::from_utf8_lossy(&result), "3 hello");
     }
 
     #[test]
     fn skips_color_attributes() {
-        let result = expand_hardstatus(b"%{=b bc}%n", 0, b"", &[], test_time());
+        let result = expand_hardstatus(b"%{=b bc}%n", 0, b"", &[], test_time(), 80);
         assert_eq!(String::from_utf8_lossy(&result), "0");
     }
 }
