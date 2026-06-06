@@ -612,10 +612,21 @@ fn execute_command(
             }
         }
         b"bindkey" => {
-            // parse bindkey: bindkey [-d] [-m] [-a] [class] [args...]
-            // Currently accepted with basic parsing
-            let has_flag = args.iter().any(|a| a == b"-d" || a == b"-a" || a == b"-m");
-            let _ = has_flag;
+            // bindkey [-d] [-m] [-a] [class] [string [command args...]]
+            // For now, treat the first non-flag argument as the key and rest as command
+            let non_flags: Vec<_> = args
+                .iter()
+                .filter(|a| {
+                    **a != b"-d" && **a != b"-a" && **a != b"-m" && **a != b"-k" && **a != b"-t"
+                })
+                .collect();
+            if non_flags.len() >= 2 {
+                #[allow(clippy::collapsible_if)]
+                if let Ok(key) = parse_escape(non_flags[0]) {
+                    let command = non_flags[1..].iter().map(|a| a.to_vec()).collect();
+                    config.bindings.push(KeyBinding { key, command });
+                }
+            }
         }
         b"nethack" => {
             // Accepted — enables nethack mode
