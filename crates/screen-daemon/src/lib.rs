@@ -229,6 +229,8 @@ pub struct PtySessionConfig {
     pub multiuser: Option<bool>,
     /// ACL entries for multi-user access.
     pub acl: Vec<AclEntry>,
+    /// Key bindings from bindkey config lines: (key_byte, command_words).
+    pub bindkeys: Vec<(u8, Vec<Vec<u8>>)>,
 }
 
 impl PtySessionConfig {
@@ -284,6 +286,7 @@ impl PtySessionConfig {
             unsetenv: Vec::new(),
             multiuser: None,
             acl: Vec::new(),
+            bindkeys: Vec::new(),
         }
     }
 
@@ -437,6 +440,43 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
         while let Ok(event) = client_rx.try_recv() {
             match event {
                 ClientEvent::Input(id, bytes) => {
+                    // Try to handle as mouse event if mouse mode is enabled
+                    let client_idx = clients.iter().position(|c| c.id == id);
+                    let client_mouse_mode = client_idx
+                        .and_then(|idx| session.windows.get(clients[idx].selected))
+                        .map(|w| w.terminal.mouse_mode())
+                        .unwrap_or(screen_terminal::MouseMode::Off);
+                    if client_mouse_mode != screen_terminal::MouseMode::Off {
+                        // Accumulate bytes and try to decode mouse events
+                        let Some(idx) = client_idx else { continue };
+                        clients[idx].mouse_buf.extend_from_slice(&bytes);
+                        let selected = clients[idx].selected;
+                        loop {
+                            let buf_snapshot = clients[idx].mouse_buf.clone();
+                            if let Some((event, consumed)) =
+                                try_decode_mouse(&buf_snapshot, client_mouse_mode)
+                            {
+                                clients[idx].mouse_buf.drain(..consumed);
+                                // Handle mouse event (passing session, clients without holding a borrow on client)
+                                handle_mouse_event(id, event, &mut session, &mut clients)?;
+                            } else if buf_snapshot.starts_with(b"\x1b[M")
+                                || buf_snapshot.starts_with(b"\x1b[<")
+                            {
+                                // Partial mouse sequence, wait for more bytes
+                                break;
+                            } else {
+                                // Not a mouse sequence, flush buffer to pty
+                                let flushed = std::mem::take(&mut clients[idx].mouse_buf);
+                                session.write_to_window(selected, &flushed)?;
+                                break;
+                            }
+                            if clients[idx].mouse_buf.is_empty() {
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+
                     // In region mode, route input to focused region's window
                     let effective_window = if session.regions.len() > 1 {
                         session
@@ -450,42 +490,232 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     if session.copy_mode_active {
                         if let Some(c) = clients.iter().find(|c| c.id == id) {
                             let selected = c.selected;
-                            match bytes.as_slice() {
-                                // Escape or Ctrl-c or q: exit copy mode
-                                [0x1b] | [0x03] | [b'q'] => {
-                                    session.copy_mode_active = false;
-                                    session.copy_mode_mark = None;
-                                    if let Some(window) = session.windows.get(selected) {
-                                        let redraw = window.grid_redraw();
-                                        if let Some(c) = clients.iter_mut().find(|c| c.id == id) {
-                                            let _ =
-                                                Message::PtyOutput(redraw).write_to(&mut c.stream);
+                            // If in search mode, accumulate query
+                            if session.copy_mode_search.is_some() {
+                                match bytes.as_slice() {
+                                    // Enter: execute search
+                                    [b'\r'] | [b'\n'] => {
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let query =
+                                                session.copy_mode_search.take().unwrap_or_default();
+                                            let lines = window.scrollback_lines();
+                                            let query_str =
+                                                String::from_utf8_lossy(&query).to_lowercase();
+                                            let mut matches = Vec::new();
+                                            for (i, line) in lines.iter().enumerate() {
+                                                let text =
+                                                    String::from_utf8_lossy(line).to_lowercase();
+                                                if text.contains(&query_str) {
+                                                    matches.push(i as u32);
+                                                }
+                                            }
+                                            if !matches.is_empty() {
+                                                session.copy_mode_cursor = matches[0];
+                                                session.copy_mode_matches = matches;
+                                                session.copy_mode_match_idx = 0;
+                                            }
+                                            send_copy_cursor(id, &session, &mut clients)?;
                                         }
                                     }
+                                    // Escape or Ctrl-c: cancel search
+                                    [0x1b] | [0x03] => {
+                                        session.copy_mode_search = None;
+                                    }
+                                    // Backspace / Delete: remove last char
+                                    [0x7f] | [b'\x08'] => {
+                                        if let Some(ref mut q) = session.copy_mode_search {
+                                            q.pop();
+                                        }
+                                    }
+                                    // Printable bytes: accumulate
+                                    other if other.len() == 1 && other[0] >= 0x20 => {
+                                        if let Some(ref mut q) = session.copy_mode_search {
+                                            q.push(other[0]);
+                                        }
+                                        // Echo the query character back
+                                        if let Some(c) = clients.iter_mut().find(|c| c.id == id) {
+                                            let _ = Message::Echo(other.to_vec())
+                                                .write_to(&mut c.stream);
+                                        }
+                                    }
+                                    _ => {}
                                 }
-                                // j or down: move cursor down
-                                [b'j'] | [b'B'] => {
-                                    session.copy_mode_cursor =
-                                        session.copy_mode_cursor.saturating_add(1);
-                                    send_copy_cursor(id, &session, &mut clients)?;
-                                }
-                                // k or up: move cursor up
-                                [b'k'] | [b'A'] => {
-                                    session.copy_mode_cursor =
-                                        session.copy_mode_cursor.saturating_sub(1);
-                                    send_copy_cursor(id, &session, &mut clients)?;
-                                }
-                                // h or left: move column left (not supported, just acknowledge)
-                                [b'h'] | [b'D'] => {}
-                                // l or right: move column right
-                                [b'l'] | [b'C'] => {}
-                                // Space: set mark
-                                [b' '] => {
-                                    if session.copy_mode_mark.is_none() {
-                                        session.copy_mode_mark = Some(session.copy_mode_cursor);
-                                    } else {
-                                        // Second mark: copy region and exit
-                                        let mark = session.copy_mode_mark.unwrap_or(0);
+                            } else {
+                                match bytes.as_slice() {
+                                    // Escape or Ctrl-c: exit copy mode
+                                    [0x1b] | [0x03] | [b'q'] => {
+                                        session.copy_mode_active = false;
+                                        session.copy_mode_mark = None;
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let redraw = window.grid_redraw();
+                                            if let Some(c) = clients.iter_mut().find(|c| c.id == id)
+                                            {
+                                                let _ = Message::PtyOutput(redraw)
+                                                    .write_to(&mut c.stream);
+                                            }
+                                        }
+                                    }
+                                    // j / down: move cursor down
+                                    [b'j'] | [b'B'] => {
+                                        session.copy_mode_cursor =
+                                            session.copy_mode_cursor.saturating_add(1);
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // k / up: move cursor up
+                                    [b'k'] | [b'A'] => {
+                                        session.copy_mode_cursor =
+                                            session.copy_mode_cursor.saturating_sub(1);
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // h / left: move column left
+                                    [b'h'] | [b'D'] => {
+                                        session.copy_mode_column =
+                                            session.copy_mode_column.saturating_sub(1);
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // l / right: move column right
+                                    [b'l'] | [b'C'] => {
+                                        session.copy_mode_column =
+                                            session.copy_mode_column.saturating_add(1);
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // w: word forward
+                                    [b'w'] => {
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let lines = window.scrollback_lines();
+                                            let idx = session.copy_mode_cursor as usize;
+                                            if let Some(line) = lines.get(idx) {
+                                                let col = session.copy_mode_column as usize;
+                                                let bytes = &line[col.min(line.len())..];
+                                                // Skip current word, then skip spaces to next word
+                                                let mut new_col = col;
+                                                let mut in_word = bytes
+                                                    .first()
+                                                    .is_some_and(|b| !b.is_ascii_whitespace());
+                                                for &b in bytes {
+                                                    let is_space = b.is_ascii_whitespace();
+                                                    if in_word && is_space {
+                                                        in_word = false;
+                                                    } else if !in_word && !is_space {
+                                                        break;
+                                                    }
+                                                    new_col += 1;
+                                                }
+                                                session.copy_mode_column = new_col as u32;
+                                            }
+                                        }
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // b: word backward
+                                    [b'b'] => {
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let lines = window.scrollback_lines();
+                                            let idx = session.copy_mode_cursor as usize;
+                                            if let Some(line) = lines.get(idx) {
+                                                let col = session.copy_mode_column as usize;
+                                                if col > 0 {
+                                                    let before = &line[..col.min(line.len())];
+                                                    // Skip spaces to find previous word end
+                                                    let mut new_col = col;
+                                                    let mut seen_non_space = false;
+                                                    for &b in before.iter().rev() {
+                                                        if b.is_ascii_whitespace() {
+                                                            if seen_non_space {
+                                                                break;
+                                                            }
+                                                        } else {
+                                                            seen_non_space = true;
+                                                        }
+                                                        new_col = new_col.saturating_sub(1);
+                                                    }
+                                                    session.copy_mode_column = new_col as u32;
+                                                }
+                                            }
+                                        }
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // 0: beginning of line
+                                    [b'0'] => {
+                                        session.copy_mode_column = 0;
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // ^: first non-whitespace
+                                    [b'^'] => {
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let lines = window.scrollback_lines();
+                                            let idx = session.copy_mode_cursor as usize;
+                                            if let Some(line) = lines.get(idx) {
+                                                session.copy_mode_column = line
+                                                    .iter()
+                                                    .position(|b| !b.is_ascii_whitespace())
+                                                    .map(|p| p as u32)
+                                                    .unwrap_or(0);
+                                            }
+                                        }
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // $: end of line
+                                    [b'$'] => {
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let lines = window.scrollback_lines();
+                                            let idx = session.copy_mode_cursor as usize;
+                                            if let Some(line) = lines.get(idx) {
+                                                session.copy_mode_column =
+                                                    line.len().saturating_sub(1) as u32;
+                                            }
+                                        }
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // Space: toggle mark
+                                    [b' '] => {
+                                        if session.copy_mode_mark.is_none() {
+                                            session.copy_mode_mark = Some(session.copy_mode_cursor);
+                                        } else {
+                                            // Second mark: copy region and keep in copy mode
+                                            let mark = session.copy_mode_mark.unwrap_or(0);
+                                            let start = mark.min(session.copy_mode_cursor);
+                                            let end = mark.max(session.copy_mode_cursor);
+                                            if let Some(window) = session.windows.get(selected) {
+                                                let lines = window.scrollback_lines();
+                                                let mut selected_data = Vec::new();
+                                                for i in start..=end {
+                                                    if let Some(line) = lines.get(i as usize) {
+                                                        selected_data.extend_from_slice(line);
+                                                        selected_data.push(b'\n');
+                                                    }
+                                                }
+                                                session.paste_buffer.push(selected_data);
+                                            }
+                                            session.copy_mode_mark = None;
+                                        }
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // y: yank (copy) and stay in copy mode
+                                    [b'y'] => {
+                                        let mark = session
+                                            .copy_mode_mark
+                                            .unwrap_or(session.copy_mode_cursor);
+                                        let start = mark.min(session.copy_mode_cursor);
+                                        let end = mark.max(session.copy_mode_cursor);
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let lines = window.scrollback_lines();
+                                            let mut selected_data = Vec::new();
+                                            for i in start..=end {
+                                                if let Some(line) = lines.get(i as usize) {
+                                                    selected_data.extend_from_slice(line);
+                                                    selected_data.push(b'\n');
+                                                }
+                                            }
+                                            session.paste_buffer.push(selected_data);
+                                        }
+                                        session.copy_mode_mark = None;
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // Enter: copy and exit
+                                    [b'\r'] => {
+                                        let mark = session
+                                            .copy_mode_mark
+                                            .unwrap_or(session.copy_mode_cursor);
                                         let start = mark.min(session.copy_mode_cursor);
                                         let end = mark.max(session.copy_mode_cursor);
                                         if let Some(window) = session.windows.get(selected) {
@@ -510,72 +740,111 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                                             }
                                         }
                                     }
-                                }
-                                // a or enter: copy and exit
-                                [b'a'] | [b'\r'] => {
-                                    let mark =
-                                        session.copy_mode_mark.unwrap_or(session.copy_mode_cursor);
-                                    let start = mark.min(session.copy_mode_cursor);
-                                    let end = mark.max(session.copy_mode_cursor);
-                                    if let Some(window) = session.windows.get(selected) {
-                                        let lines = window.scrollback_lines();
-                                        let mut selected_data = Vec::new();
-                                        for i in start..=end {
-                                            if let Some(line) = lines.get(i as usize) {
-                                                selected_data.extend_from_slice(line);
-                                                selected_data.push(b'\n');
-                                            }
-                                        }
-                                        session.paste_buffer.push(selected_data);
+                                    // g / G: go to top/bottom
+                                    [b'g'] => {
+                                        session.copy_mode_cursor = 0;
+                                        session.copy_mode_column = 0;
+                                        send_copy_cursor(id, &session, &mut clients)?;
                                     }
-                                    session.copy_mode_mark = None;
-                                    session.copy_mode_active = false;
-                                    if let Some(window) = session.windows.get(selected) {
-                                        let redraw = window.grid_redraw();
+                                    [b'G'] => {
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let total = window.scrollback_lines().len() as u32;
+                                            session.copy_mode_cursor = total.saturating_sub(1);
+                                            session.copy_mode_column = 0;
+                                            send_copy_cursor(id, &session, &mut clients)?;
+                                        }
+                                    }
+                                    // Ctrl-f: page down
+                                    [0x06] => {
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let rows = window.terminal.dimensions.rows as u32;
+                                            let total = window.scrollback_lines().len() as u32;
+                                            session.copy_mode_cursor = (session.copy_mode_cursor
+                                                + rows)
+                                                .min(total.saturating_sub(1));
+                                            send_copy_cursor(id, &session, &mut clients)?;
+                                        }
+                                    }
+                                    // Ctrl-b: page up
+                                    [0x02] => {
+                                        session.copy_mode_cursor =
+                                            session.copy_mode_cursor.saturating_sub(
+                                                session
+                                                    .windows
+                                                    .get(selected)
+                                                    .map(|w| w.terminal.dimensions.rows)
+                                                    .unwrap_or(24)
+                                                    as u32,
+                                            );
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // Ctrl-u: half page up
+                                    [0x15] => {
+                                        let half = session
+                                            .windows
+                                            .get(selected)
+                                            .map(|w| w.terminal.dimensions.rows / 2)
+                                            .unwrap_or(12)
+                                            as u32;
+                                        session.copy_mode_cursor =
+                                            session.copy_mode_cursor.saturating_sub(half);
+                                        send_copy_cursor(id, &session, &mut clients)?;
+                                    }
+                                    // Ctrl-d: half page down
+                                    [0x04] => {
+                                        if let Some(window) = session.windows.get(selected) {
+                                            let half = window.terminal.dimensions.rows as u32 / 2;
+                                            let total = window.scrollback_lines().len() as u32;
+                                            session.copy_mode_cursor = (session.copy_mode_cursor
+                                                + half)
+                                                .min(total.saturating_sub(1));
+                                            send_copy_cursor(id, &session, &mut clients)?;
+                                        }
+                                    }
+                                    // / : enter forward search mode
+                                    [b'/'] => {
+                                        session.copy_mode_search = Some(Vec::new());
                                         if let Some(c) = clients.iter_mut().find(|c| c.id == id) {
-                                            let _ =
-                                                Message::PtyOutput(redraw).write_to(&mut c.stream);
+                                            let _ = Message::Echo(b"/".to_vec())
+                                                .write_to(&mut c.stream);
                                         }
                                     }
-                                }
-                                // g or G: go to top/bottom
-                                [b'g'] => {
-                                    session.copy_mode_cursor = 0;
-                                    send_copy_cursor(id, &session, &mut clients)?;
-                                }
-                                [b'G'] => {
-                                    if let Some(window) = session.windows.get(selected) {
-                                        let total = window.scrollback_lines().len() as u32;
-                                        session.copy_mode_cursor = total.saturating_sub(1);
+                                    // ? : enter backward search mode (same as / for now)
+                                    [b'?'] => {
+                                        session.copy_mode_search = Some(Vec::new());
+                                        if let Some(c) = clients.iter_mut().find(|c| c.id == id) {
+                                            let _ = Message::Echo(b"?".to_vec())
+                                                .write_to(&mut c.stream);
+                                        }
+                                    }
+                                    // n: next search match
+                                    [b'n'] => {
+                                        if !session.copy_mode_matches.is_empty() {
+                                            session.copy_mode_match_idx =
+                                                (session.copy_mode_match_idx + 1)
+                                                    % session.copy_mode_matches.len();
+                                            session.copy_mode_cursor = session.copy_mode_matches
+                                                [session.copy_mode_match_idx];
+                                            session.copy_mode_column = 0;
+                                            send_copy_cursor(id, &session, &mut clients)?;
+                                        }
+                                    }
+                                    // N: previous search match
+                                    [b'N'] if !session.copy_mode_matches.is_empty() => {
+                                        session.copy_mode_match_idx =
+                                            if session.copy_mode_match_idx == 0 {
+                                                session.copy_mode_matches.len() - 1
+                                            } else {
+                                                session.copy_mode_match_idx - 1
+                                            };
+                                        session.copy_mode_cursor =
+                                            session.copy_mode_matches[session.copy_mode_match_idx];
+                                        session.copy_mode_column = 0;
                                         send_copy_cursor(id, &session, &mut clients)?;
                                     }
+                                    _ => {}
                                 }
-                                // Ctrl-f: page down
-                                [0x06] => {
-                                    if let Some(window) = session.windows.get(selected) {
-                                        let rows = window.terminal.dimensions.rows as u32;
-                                        let total = window.scrollback_lines().len() as u32;
-                                        session.copy_mode_cursor = (session.copy_mode_cursor
-                                            + rows)
-                                            .min(total.saturating_sub(1));
-                                        send_copy_cursor(id, &session, &mut clients)?;
-                                    }
-                                }
-                                // Ctrl-b: page up
-                                [0x02] => {
-                                    session.copy_mode_cursor =
-                                        session.copy_mode_cursor.saturating_sub(
-                                            session
-                                                .windows
-                                                .get(selected)
-                                                .map(|w| w.terminal.dimensions.rows)
-                                                .unwrap_or(24)
-                                                as u32,
-                                        );
-                                    send_copy_cursor(id, &session, &mut clients)?;
-                                }
-                                _ => {}
-                            }
+                            } // end of if search_mode else
                         }
                     } else if let Some(client) = clients.iter().find(|c| c.id == id) {
                         session
@@ -1035,8 +1304,12 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                             if session.copy_mode_cursor >= total {
                                 session.copy_mode_cursor = total.saturating_sub(1);
                             }
-                            let _ = Message::CopyModeCursor(session.copy_mode_cursor, 0, total)
-                                .write_to(&mut c.stream);
+                            let _ = Message::CopyModeCursor(
+                                session.copy_mode_cursor,
+                                session.copy_mode_column as u16,
+                                total,
+                            )
+                            .write_to(&mut c.stream);
                         }
                     }
                 }
@@ -1149,11 +1422,9 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         }
                     }
 
-                    // Bell detection: notify clients when output contains BEL (0x07)
-                    if output.contains(&0x07) {
-                        for client in clients.iter_mut() {
-                            let _ = Message::Bell(b"bell".to_vec()).write_to(&mut client.stream);
-                        }
+                    // Bell detection: use the terminal engine's flag
+                    if window.terminal.take_bell() {
+                        broadcast(&mut clients, &Message::Bell(b"bell".to_vec()))?;
                     }
 
                     // Silence monitoring: check for windows with silence timeout
@@ -1311,7 +1582,12 @@ struct SessionState {
     /// Copy mode state.
     copy_mode_active: bool,
     copy_mode_cursor: u32,
+    copy_mode_column: u32,
     copy_mode_mark: Option<u32>,
+    /// Copy mode search state.
+    copy_mode_search: Option<Vec<u8>>,
+    copy_mode_matches: Vec<u32>,
+    copy_mode_match_idx: usize,
     /// Search case sensitivity.
     ignorecase: bool,
     /// Max windows.
@@ -1415,7 +1691,11 @@ impl SessionState {
             saved_regions: None,
             copy_mode_active: false,
             copy_mode_cursor: 0,
+            copy_mode_column: 0,
             copy_mode_mark: None,
+            copy_mode_search: None,
+            copy_mode_matches: Vec::new(),
+            copy_mode_match_idx: 0,
             ignorecase: true,
             maxwin: None,
             autodetach: false,
@@ -1672,12 +1952,19 @@ impl SessionState {
                 title: w.terminal.title.clone().unwrap_or_default(),
             })
             .collect();
+        // Use active window's terminal width for alignment (fallback 80)
+        let term_width = self
+            .windows
+            .get(self.selected)
+            .map(|w| w.terminal.dimensions.columns as usize)
+            .unwrap_or(80);
         screen_core::hardstatus::expand_hardstatus(
             format,
             active_number,
             &active_title,
             &winfos,
             SystemTime::now(),
+            term_width,
         )
     }
 
@@ -1955,7 +2242,8 @@ fn send_copy_cursor(
     {
         let total = window.scrollback_lines().len() as u32;
         let cursor = session.copy_mode_cursor.min(total.saturating_sub(1));
-        let _ = Message::CopyModeCursor(cursor, 0, total).write_to(&mut c.stream);
+        let col = (session.copy_mode_column as u16).min(999);
+        let _ = Message::CopyModeCursor(cursor, col, total).write_to(&mut c.stream);
     }
     Ok(())
 }
@@ -1976,7 +2264,269 @@ fn send_to_client(
 
 // ─── Client handling ───────────────────────────────────────────────────────
 
-#[derive(Debug)]
+// ---------------------------------------------------------------------------
+// Mouse event decoding
+// ---------------------------------------------------------------------------
+
+/// Decoded mouse event from a terminal mouse report.
+#[derive(Debug, Clone, Copy)]
+struct MouseEvent {
+    button: u8,    // 0=left, 1=middle, 2=right, 3=release, 4=scroll-up, 5=scroll-down
+    column: u16,   // 0-based column
+    row: u16,      // 0-based row
+    pressed: bool, // true for press/scroll, false for release
+}
+
+/// Try to decode a mouse report from the beginning of a byte buffer.
+/// Returns (MouseEvent, bytes_consumed) if successful.
+fn try_decode_mouse(bytes: &[u8], mode: screen_terminal::MouseMode) -> Option<(MouseEvent, usize)> {
+    if bytes.len() < 3 {
+        return None;
+    }
+    match mode {
+        screen_terminal::MouseMode::Off => None,
+        screen_terminal::MouseMode::Sgr => {
+            // SGR: \x1b[<button;col;rowM (press) or \x1b[<button;col;rowm (release)
+            if bytes.len() < 6 || &bytes[0..3] != b"\x1b[<" {
+                return None;
+            }
+            let mut params = [0u16; 3];
+            let mut param_idx = 0usize;
+            let mut pos = 3usize;
+            let mut final_byte = 0u8;
+            while pos < bytes.len() {
+                let b = bytes[pos];
+                pos += 1;
+                if b == b'M' || b == b'm' {
+                    final_byte = b;
+                    break;
+                } else if b == b';' {
+                    if param_idx < 2 {
+                        param_idx += 1;
+                    }
+                } else if b.is_ascii_digit() {
+                    let v = params[param_idx] as u32;
+                    params[param_idx] = v
+                        .saturating_mul(10)
+                        .saturating_add((b - b'0') as u32)
+                        .min(u16::MAX as u32) as u16;
+                } else {
+                    return None; // unexpected byte
+                }
+            }
+            if final_byte == 0 {
+                return None; // incomplete
+            }
+            let button = params[0] as u8;
+            let (btn, pressed) = decode_sgr_button(button);
+            Some((
+                MouseEvent {
+                    button: btn,
+                    column: params[1].saturating_sub(1),
+                    row: params[2].saturating_sub(1),
+                    pressed,
+                },
+                pos,
+            ))
+        }
+        _ => {
+            // X10 / Normal / ButtonEvent / AnyEvent: \x1b[M <b+32> <c+32> <r+32>
+            if bytes.len() < 6 || &bytes[0..3] != b"\x1b[M" {
+                return None;
+            }
+            let button_raw = bytes[3].saturating_sub(0x20);
+            let col = bytes[4].saturating_sub(0x20) as u16;
+            let row = bytes[5].saturating_sub(0x20) as u16;
+            let (btn, pressed) = if button_raw >= 64 {
+                // Wheel: buttons 64=up, 65=down
+                (button_raw - 60, true) // 4=up, 5=down
+            } else if button_raw == 3 {
+                // Release in mode 1000+ (button 3 is sentinel for release)
+                (0, false)
+            } else if button_raw & 32 != 0 {
+                // Motion event (mode 1002, 1003)
+                (button_raw & 3, true)
+            } else {
+                (button_raw & 3, true)
+            };
+            Some((
+                MouseEvent {
+                    button: btn,
+                    column: col,
+                    row,
+                    pressed,
+                },
+                6,
+            ))
+        }
+    }
+}
+
+/// Decode SGR button encoding.
+/// Bits 0-1: button (0=left, 1=middle, 2=right)
+/// Bit 6: wheel (add 64)
+/// Bit 5: motion (mode 1002/1003)
+fn decode_sgr_button(raw: u8) -> (u8, bool) {
+    let low = raw & 3;
+    if raw >= 64 {
+        // Wheel
+        (low + 4, true)
+    } else if raw & 32 != 0 {
+        (low, true) // motion
+    } else {
+        // Press or release (release has no special marker in SGR; M=press, m=release)
+        // But the final byte M/m tells us press/release, handled by caller
+        (low, true)
+    }
+}
+
+/// Handle a decoded mouse event: clicks on hardstatus select windows/regions,
+/// other events are forwarded to the active window's pty.
+fn handle_mouse_event(
+    client_id: u64,
+    event: MouseEvent,
+    session: &mut SessionState,
+    clients: &mut Vec<AttachedClient>,
+) -> Result<(), DaemonError> {
+    let Some(client) = clients.iter_mut().find(|c| c.id == client_id) else {
+        return Ok(());
+    };
+    let Some(window) = session.windows.get(client.selected) else {
+        return Ok(());
+    };
+    let term_rows = window.terminal.dimensions.rows;
+    let term_cols = window.terminal.dimensions.columns;
+
+    // Check if click is on hardstatus line (last row)
+    if event.row >= term_rows && session.hardstatus_format.is_some() {
+        // Click on hardstatus — interpret as window/region selection
+        if event.pressed && event.button == 0 {
+            handle_hardstatus_click(client_id, event.column, term_cols, session, clients)?;
+        }
+        return Ok(());
+    }
+
+    // Forward mouse event to pty
+    if event.row < term_rows {
+        let encoded = encode_mouse_event(&event, window.terminal.mouse_mode());
+        if !encoded.is_empty() {
+            session.write_to_window(client.selected, &encoded)?;
+        }
+    }
+    Ok(())
+}
+
+/// Click on hardstatus: select window by its position in the window list.
+fn handle_hardstatus_click(
+    _client_id: u64,
+    column: u16,
+    _term_cols: u16,
+    session: &mut SessionState,
+    clients: &mut Vec<AttachedClient>,
+) -> Result<(), DaemonError> {
+    // The hardstatus line format is typically:
+    // "left-aligned-content" + padding + "right-aligned-content"
+    // Window numbers appear in the left part or as %w / %W list
+    // For simplicity, we find the window whose number's position contains the click column
+
+    let status = session.format_hardstatus();
+    let status_str = String::from_utf8_lossy(&status);
+
+    // Look for window number patterns in the status: "N*" or "N-"
+    let alive: Vec<(u32, usize, usize)> = session
+        .windows
+        .iter()
+        .filter(|w| w.alive)
+        .filter_map(|w| {
+            let pattern = format!("{}*", w.number);
+            status_str
+                .find(&pattern)
+                .map(|pos| (w.number, pos, pattern.len()))
+        })
+        .collect();
+
+    // Also check without marker
+    let alt: Vec<(u32, usize, usize)> = session
+        .windows
+        .iter()
+        .filter(|w| w.alive)
+        .filter_map(|w| {
+            let pattern = format!("{}", w.number);
+            // Only match if it's a standalone number (preceded by space or at start)
+            status_str
+                .match_indices(&pattern)
+                .find(|(pos, _)| *pos == 0 || status_str.as_bytes().get(pos - 1) == Some(&b' '))
+                .map(|(pos, _)| (w.number, pos, pattern.len()))
+        })
+        .collect();
+
+    // Find the window whose number's column range contains the click
+    let all_matches: Vec<_> = alive.iter().chain(alt.iter()).collect();
+    for (num, pos, len) in all_matches {
+        let start_col = *pos as u16;
+        let end_col = start_col + *len as u16;
+        if column >= start_col && column < end_col {
+            // Select this window
+            let new_idx = session.window_index(*num);
+            if let Some(idx) = new_idx {
+                for client in clients.iter_mut() {
+                    client.last_selected = client.selected;
+                    client.selected = idx;
+                }
+                // Redraw and notify
+                if let Some(window) = session.windows.get(idx) {
+                    let redraw = window.grid_redraw();
+                    broadcast(clients, &Message::PtyOutput(redraw))?;
+                }
+                broadcast(clients, &Message::WindowSelected { number: *num })?;
+            }
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Encode a mouse event for forwarding to the pty, in the format the pty expects.
+fn encode_mouse_event(event: &MouseEvent, mode: screen_terminal::MouseMode) -> Vec<u8> {
+    match mode {
+        screen_terminal::MouseMode::Sgr => {
+            let final_byte = if event.pressed { b'M' } else { b'm' };
+            let button = if event.button >= 4 {
+                64 + (event.button - 4)
+            } else {
+                event.button
+            };
+            format!(
+                "\x1b[<{};{};{}{}",
+                button,
+                event.column + 1,
+                event.row + 1,
+                final_byte as char
+            )
+            .into_bytes()
+        }
+        screen_terminal::MouseMode::Off => Vec::new(),
+        _ => {
+            // X10/Normal format
+            let button_byte = if event.button >= 4 {
+                0x20 + 64 + (event.button - 4)
+            } else if !event.pressed {
+                0x20 + 3 // release sentinel
+            } else {
+                0x20 + event.button
+            };
+            vec![
+                b'\x1b',
+                b'[',
+                b'M',
+                button_byte,
+                event.column.saturating_add(1).min(255) as u8 + 0x20,
+                event.row.saturating_add(1).min(255) as u8 + 0x20,
+            ]
+        }
+    }
+}
+
 struct AttachedClient {
     id: u64,
     stream: UnixStream,
@@ -1984,6 +2534,8 @@ struct AttachedClient {
     selected: usize,
     /// Previously-selected window index for "other" command
     last_selected: usize,
+    /// Buffer for assembling partial mouse sequences
+    mouse_buf: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -2153,6 +2705,7 @@ fn accept_connections(
                             stream,
                             selected: session.selected,
                             last_selected: session.selected,
+                            mouse_buf: Vec::new(),
                         });
                     }
                     Ok(Message::Detach) => {
