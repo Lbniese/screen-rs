@@ -97,17 +97,92 @@ fn main() -> ExitCode {
 }
 
 fn print_help() {
-    println!("screen-rs {VERSION} (development-only)");
-    println!("No GNU Screen compatibility is claimed yet.");
+    println!("screen-rs {VERSION} — Rust implementation of GNU Screen");
     println!();
     println!("Usage:");
-    println!("  screen-rs --help");
-    println!("  screen-rs --version");
-    println!("  screen-rs [-S name] [-T term] [-s shell] [-L] [-d -m | -D -m] [command [args...]]");
-    println!("  screen-rs -r [name]");
-    println!("  screen-rs -ls | -list | -wipe");
-    println!("  screen-rs [-S name] [-p window] -X command [args...]");
-    println!("  screen-rs [-S name] [-p window] -Q command [args...]");
+    println!("  screen-rs [options] [command [args...]]          Create a new session");
+    println!("  screen-rs -r [session]                           Reattach to a session");
+    println!("  screen-rs -d -r [session]                        Detach and reattach");
+    println!("  screen-rs -d -m [options] [cmd]                  Start detached");
+    println!("  screen-rs -D -m [options] [cmd]                  Start detached (no fork)");
+    println!("  screen-rs -ls | -list                            List sessions");
+    println!("  screen-rs -wipe [session]                        Remove dead sessions");
+    println!("  screen-rs -X [options] <command> [args...]       Send command to session");
+    println!("  screen-rs -Q [options] <command> [args...]       Query session");
+    println!("  screen-rs -RR                                     Reattach or create");
+    println!("  screen-rs --version                               Print version");
+    println!();
+    println!("Options:");
+    println!("  -S <name>    Session name");
+    println!("  -T <term>    Terminal type (default: screen)");
+    println!("  -s <shell>   Shell to use");
+    println!("  -p <window>  Window number/name for -X/-Q");
+    println!("  -c <file>    Config file to read");
+    println!("  -L           Enable logging");
+    println!("  -d -m        Start detached");
+    println!("  -D -m        Start detached, no fork");
+    println!("  -r [session] Reattach");
+    println!("  -R           Reattach or create if none");
+    println!("  -RR          Reattach or create, first available");
+    println!("  -x           Multi-user attach mode");
+    println!();
+    println!("-X commands (send to running session):");
+    print_x_commands();
+}
+
+fn print_x_commands() {
+    let cmds: &[(&str, &str)] = &[
+        ("acladd <user> [perms] [pass]", "Add ACL entry"),
+        ("aclchg <user> <perms>", "Change ACL permissions"),
+        ("acldel <user>", "Delete ACL entry"),
+        ("activity <msg>", "Set activity message"),
+        ("at <window> <cmd> [args]", "Run command in window"),
+        ("bell_msg <msg>", "Set bell message"),
+        ("colon <cmd>", "Execute screen command"),
+        ("copy", "Enter copy/scrollback mode"),
+        ("detach", "Detach session"),
+        ("eval <cmd>", "Eval colon command"),
+        ("exec <prog> [args]", "Start program in new window"),
+        ("hardcopy [-h] [file]", "Save scrollback to file"),
+        ("help", "Show -X command help"),
+        ("kill", "Kill current window"),
+        ("lastmsg", "Show last message"),
+        ("maxwin <n>", "Set maximum windows"),
+        ("monitor", "Toggle activity monitoring"),
+        ("msgminwait <secs>", "Set message minimum wait"),
+        ("msgwait <secs>", "Set message wait time"),
+        ("multiuser [on|off]", "Toggle multi-user mode"),
+        ("number [N]", "Show/change window number"),
+        ("only", "Kill all other windows"),
+        ("other", "Switch to previous window"),
+        ("password [pass]", "Set session password"),
+        ("paste", "Paste from buffer"),
+        ("pow_detach", "Toggle power detach"),
+        ("quit", "Kill all windows and quit"),
+        ("readbuf [file]", "Read paste buffer from file"),
+        ("readreg <reg> [file]", "Read register from file"),
+        ("register <reg> <string>", "Store string in register"),
+        ("remove", "Remove current region"),
+        ("select <N>", "Select window by number"),
+        ("sessionname [name]", "Show/set session name"),
+        ("setenv <var> <val>", "Set environment variable"),
+        ("silence", "Toggle silence monitoring"),
+        ("sleep <secs>", "Sleep seconds"),
+        ("split", "Split region horizontally"),
+        ("stuff <string>", "Send string to window"),
+        ("suspend", "Suspend session"),
+        ("time", "Show current time"),
+        ("title [text]", "Set window title"),
+        ("unsetenv <var>", "Unset environment variable"),
+        ("version", "Show version"),
+        ("windows", "List windows"),
+        ("writebuf [file]", "Write paste buffer to file"),
+        ("zombie [cmd]", "Set zombie command"),
+    ];
+    let max_width = cmds.iter().map(|(c, _)| c.len()).max().unwrap_or(0);
+    for (cmd, desc) in cmds {
+        println!("  {:<width$}  {}", cmd, desc, width = max_width);
+    }
 }
 
 fn report_result(result: Result<(), String>) -> ExitCode {
@@ -374,6 +449,21 @@ fn resolve_escape() -> Vec<u8> {
         .ok()
         .and_then(|o| o.escape)
         .unwrap_or_else(|| vec![0x01])
+}
+
+/// Load key bindings from the active screenrc.
+fn resolve_bindings() -> Vec<(Vec<u8>, Vec<Vec<u8>>)> {
+    #[allow(clippy::collapsible_if)]
+    if let Some(cfg_path) = explicit_config_path(None) {
+        if let Ok(config) = screen_config::parse_config_file(&cfg_path) {
+            return config
+                .bindings
+                .into_iter()
+                .map(|b| (b.key, b.command))
+                .collect();
+        }
+    }
+    Vec::new()
 }
 
 /// Decode a hex string (like "48656c6c6f") into bytes.
@@ -661,7 +751,7 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
 fn attach(options: AttachOptions) -> Result<u8, String> {
     let runtime = open_or_create_runtime()?;
     let socket_path = resolve_session_socket(&runtime, options.session)?;
-    attach_socket(socket_path, resolve_escape())
+    attach_socket(socket_path, resolve_escape(), resolve_bindings())
 }
 
 fn attach_or_create(options: AttachOrCreateOptions) -> Result<u8, String> {
@@ -673,8 +763,9 @@ fn attach_or_create(options: AttachOrCreateOptions) -> Result<u8, String> {
     }
 
     let escape = resolve_escape();
+    let bindings = resolve_bindings();
     match find_active_session_socket(&runtime, options.session.as_deref())? {
-        ActiveSessionMatch::One(socket_path) => attach_socket(socket_path, escape),
+        ActiveSessionMatch::One(socket_path) => attach_socket(socket_path, escape, bindings),
         ActiveSessionMatch::None => start_attached(CreateOptions {
             session_name: options.session,
             config_file: None,
@@ -697,7 +788,69 @@ fn attach_or_create(options: AttachOrCreateOptions) -> Result<u8, String> {
     }
 }
 
-fn attach_socket(socket_path: PathBuf, escape: Vec<u8>) -> Result<u8, String> {
+/// Dispatch a key binding command by sending the appropriate Message to the daemon.
+fn dispatch_binding(cmd: &[Vec<u8>], stream: &mut UnixStream) {
+    if cmd.is_empty() {
+        return;
+    }
+    let name = String::from_utf8_lossy(&cmd[0]);
+    let result = match name.as_ref() {
+        "screen" | "split" => {
+            let args = cmd.get(1).cloned().unwrap_or_default();
+            Message::CreateWindow {
+                program: args,
+                args: cmd[2..].to_vec(),
+            }
+            .write_to(stream)
+        }
+        "select" => {
+            let number: u32 = cmd
+                .get(1)
+                .and_then(|a| String::from_utf8_lossy(a).parse().ok())
+                .unwrap_or(0);
+            Message::SelectWindow { number }.write_to(stream)
+        }
+        "next" => Message::NextWindow.write_to(stream),
+        "prev" | "other" => Message::PrevWindow.write_to(stream),
+        "kill" => {
+            let number: u32 = cmd
+                .get(1)
+                .and_then(|a| String::from_utf8_lossy(a).parse().ok())
+                .unwrap_or(0);
+            Message::KillWindow { number }.write_to(stream)
+        }
+        "detach" => Message::Detach.write_to(stream),
+        "redisplay" => Message::Redisplay.write_to(stream),
+        "remove" => {
+            let number: u32 = cmd
+                .get(1)
+                .and_then(|a| String::from_utf8_lossy(a).parse().ok())
+                .unwrap_or(0);
+            Message::RemoveWindow { number }.write_to(stream)
+        }
+        "monitor" => {
+            let enable = cmd.get(1).map(|a| a != b"off").unwrap_or(true);
+            Message::MonitorToggle { enable }.write_to(stream)
+        }
+        "copy" => Message::CopyModeRequest.write_to(stream),
+        "paste" => {
+            let data = cmd.get(1).cloned().unwrap_or_default();
+            Message::PasteRequest(data).write_to(stream)
+        }
+        "quit" => Message::Shutdown.write_to(stream),
+        _ => {
+            eprintln!("unknown binding: {name}");
+            Ok(())
+        }
+    };
+    let _ = result;
+}
+
+fn attach_socket(
+    socket_path: PathBuf,
+    escape: Vec<u8>,
+    bindings: Vec<(Vec<u8>, Vec<Vec<u8>>)>,
+) -> Result<u8, String> {
     let mut stream = UnixStream::connect(&socket_path)
         .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
 
@@ -736,6 +889,21 @@ fn attach_socket(socket_path: PathBuf, escape: Vec<u8>) -> Result<u8, String> {
     // Shared paste buffer between the stdin thread and the main loop
     let paste_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let paste_clone = Arc::clone(&paste_buffer);
+    // Build a fast lookup map from single-byte keys to commands
+    let binding_map: std::collections::HashMap<u8, Vec<Vec<u8>>> = bindings
+        .into_iter()
+        .filter_map(|(key, cmd)| {
+            if key.len() == 1 {
+                Some((key[0], cmd))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Visual bell toggle (C-a C-g)
+    let visual_bell = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let visual_bell_clone = Arc::clone(&visual_bell);
     let escape_prefix = escape[0];
     let escape_meta = escape.get(1).copied().unwrap_or(escape_prefix);
     thread::spawn(move || {
@@ -752,6 +920,11 @@ fn attach_socket(socket_path: PathBuf, escape: Vec<u8>) -> Result<u8, String> {
                     for byte in &buffer[..read] {
                         if prefix {
                             prefix = false;
+                            // Check custom bindings first
+                            if let Some(cmd) = binding_map.get(byte) {
+                                dispatch_binding(cmd, &mut input_stream);
+                                continue;
+                            }
                             match *byte {
                                 b'd' => {
                                     let _ = Message::Detach.write_to(&mut input_stream);
@@ -907,7 +1080,20 @@ fn attach_socket(socket_path: PathBuf, escape: Vec<u8>) -> Result<u8, String> {
                                 }
                                 b'\x07' => {
                                     // Visual bell toggle (C-a C-g)
-                                    // Client-side: toggle visual bell mode
+                                    let prev = visual_bell_clone
+                                        .fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
+                                    // Flash screen to indicate new state
+                                    if !prev {
+                                        let _ = std::io::Write::write_all(
+                                            &mut input_stream,
+                                            b"\x1b[?5h",
+                                        );
+                                        std::thread::sleep(std::time::Duration::from_millis(80));
+                                        let _ = std::io::Write::write_all(
+                                            &mut input_stream,
+                                            b"\x1b[?5l",
+                                        );
+                                    }
                                 }
                                 b'\x0c' => {
                                     // Redisplay (C-a C-l) — alias for redisplay
@@ -1132,10 +1318,18 @@ fn attach_socket(socket_path: PathBuf, escape: Vec<u8>) -> Result<u8, String> {
                 let _ = writeln!(stderr, "\r\n{}", text);
             }
             Message::Bell(_msg) => {
-                // Audible/visual bell — ring terminal bell
-                let mut stdout = io::stdout().lock();
-                let _ = stdout.write_all(b"\x07");
-                let _ = stdout.flush();
+                if visual_bell.load(std::sync::atomic::Ordering::Relaxed) {
+                    // Visual bell: brief screen flash via DECSCNM (reverse video)
+                    let _ = stdout.write_all(b"\x1b[?5h");
+                    let _ = stdout.flush();
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    let _ = stdout.write_all(b"\x1b[?5l");
+                    let _ = stdout.flush();
+                } else {
+                    // Audible bell
+                    let _ = stdout.write_all(b"\x07");
+                    let _ = stdout.flush();
+                }
             }
             Message::WindowInfo(info) => {
                 // Display window info
@@ -1352,7 +1546,7 @@ fn remote_command(options: RemoteCommandOptions) -> Result<(), String> {
         }
         Ok(())
     } else if command == OsStr::new("help") {
-        eprintln!("screen-rs — terminal multiplexer (https://github.com/Lbniese/screen-rs)");
+        print_help();
         Ok(())
     } else if command == OsStr::new("license") {
         eprintln!("screen-rs is licensed under the GNU General Public License v3.0");
@@ -2669,108 +2863,348 @@ fn copy_mode_navigate(lines: &[Vec<u8>], _stream: &mut UnixStream) -> Option<Vec
     let mut stdout = io::stdout().lock();
     // Save cursor and switch to alternate screen for copy mode
     let _ = stdout.write_all(b"\x1b[?1049h"); // alt screen
+    let _ = stdout.write_all(b"\x1b[?25l"); // hide cursor
     let _ = stdout.write_all(b"\x1b[H\x1b[J"); // clear
     let _ = stdout.flush();
 
-    let mut cursor = lines.len().saturating_sub(1); // Start at last line
-    let mut mark: Option<usize> = None;
-    let (cols, rows) = terminal_size().unwrap_or((80, 24));
-    let page_size = rows.saturating_sub(2) as usize;
+    let mut cursor_line = lines.len().saturating_sub(1); // Start at last line
+    let mut cursor_col: usize = 0;
+    let mut mark_line: Option<usize> = None;
+    let mut _mark_col: Option<usize> = None;
+    let (term_cols, term_rows) = terminal_size().unwrap_or((80, 24));
+    let page_size = term_rows.saturating_sub(2) as usize;
+    let display_cols = term_cols.saturating_sub(4) as usize; // 2 for prefix + safety
+
+    // Search state
+    let mut search_matches: Vec<(usize, usize)> = Vec::new();
+    let mut search_match_idx: usize = 0;
 
     let mut buf = [0u8; 32];
     let mut stdin = io::stdin().lock();
 
+    // Helper: collect selection from mark to cursor (line ranges only)
+    fn collect_selection(lines: &[Vec<u8>], mark: usize, cursor: usize) -> Vec<u8> {
+        let start = mark.min(cursor);
+        let end = mark.max(cursor);
+        let mut selected = Vec::new();
+        for line in lines.iter().take(end + 1).skip(start) {
+            selected.extend_from_slice(line);
+            selected.push(b'\n');
+        }
+        selected
+    }
+
+    // Helper: find all search matches
+    fn find_matches(lines: &[Vec<u8>], query: &str) -> Vec<(usize, usize)> {
+        let lower = query.to_lowercase();
+        let mut matches = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            let text = String::from_utf8_lossy(line).to_lowercase();
+            for (col, _) in text.match_indices(&lower) {
+                matches.push((i, col));
+            }
+        }
+        matches
+    }
+
     loop {
-        // Render visible lines
-        let start = cursor
+        // Compute visible range
+        let start = cursor_line
             .saturating_sub(page_size / 2)
             .min(lines.len().saturating_sub(page_size.min(lines.len())));
         let end = (start + page_size).min(lines.len());
+
         let _ = stdout.write_all(b"\x1b[H\x1b[J");
         for (i, line) in lines.iter().enumerate().take(end).skip(start) {
-            let prefix = if Some(i) == mark {
+            let is_marked = match mark_line {
+                Some(m) => {
+                    let lo = m.min(cursor_line);
+                    let hi = m.max(cursor_line);
+                    i >= lo && i <= hi
+                }
+                None => false,
+            };
+            let prefix = if i == cursor_line {
                 b"> "
-            } else if i == cursor {
+            } else if is_marked {
                 b"* "
             } else {
                 b"  "
             };
             let _ = stdout.write_all(prefix);
-            let display = String::from_utf8_lossy(line);
-            let max_cols = cols.saturating_sub(2) as usize;
-            if display.len() > max_cols {
-                let _ = stdout.write_all(display[..max_cols].as_bytes());
+            let text = String::from_utf8_lossy(line);
+            // Truncate/pad to display width
+            let visible = if text.len() > display_cols {
+                &text[..display_cols]
             } else {
-                let _ = stdout.write_all(display.as_bytes());
-            }
+                &text
+            };
+            let _ = stdout.write_all(visible.as_bytes());
+            let _ = stdout.write_all(b"\x1b[K"); // clear to end of line
             let _ = stdout.write_all(b"\r\n");
         }
+        // Fill remaining lines
+        for _ in (end - start)..page_size {
+            let _ = stdout.write_all(b"  \x1b[K\r\n");
+        }
+
         // Status line
         let _ = stdout.write_all(b"\x1b[7m"); // reverse video
+        let search_info = if !search_matches.is_empty() {
+            format!(
+                " [{}/{} matches] ",
+                search_match_idx + 1,
+                search_matches.len()
+            )
+        } else {
+            String::new()
+        };
         let status = format!(
-            "COPY MODE: j/k=move  space=mark  y=yank  q=quit  [{}/{}]",
-            cursor,
-            lines.len()
+            "COPY: j/k/h/l/w/b=nav  Space=v  y=yank  /?=search  q=quit{} L{}/{} C{}",
+            search_info,
+            cursor_line,
+            lines.len(),
+            cursor_col
         );
         let _ = stdout.write_all(status.as_bytes());
+        // Pad to fill reverse video
+        for _ in status.len()..term_cols as usize {
+            let _ = stdout.write_all(b" ");
+        }
         let _ = stdout.write_all(b"\x1b[0m");
+
+        // Highlight cursor column on current line (move cursor to status line first...
+        // actually the cursor is always on the status line)
         let _ = stdout.flush();
 
         match stdin.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
                 match &buf[..n] {
+                    // --- Line navigation ---
                     b"j" | b"\x1b[B" => {
-                        cursor = (cursor + 1).min(lines.len() - 1);
+                        cursor_line = (cursor_line + 1).min(lines.len() - 1);
                     }
                     b"k" | b"\x1b[A" => {
-                        cursor = cursor.saturating_sub(1);
+                        cursor_line = cursor_line.saturating_sub(1);
                     }
-                    b"g" => cursor = 0,
-                    b"G" => cursor = lines.len() - 1,
-                    b" " => {
-                        if let Some(m) = mark {
-                            // Have both mark and cursor, yank
-                            let start = m.min(cursor);
-                            let end = m.max(cursor);
-                            let mut selected = Vec::new();
-                            for line in lines.iter().take(end + 1).skip(start) {
-                                selected.extend_from_slice(line);
-                                selected.push(b'\n');
-                            }
-                            let _ = stdout.write_all(b"\x1b[?1049l");
-                            let _ = stdout.flush();
-                            return Some(selected);
-                        }
-                        mark = Some(cursor);
+                    // --- Column navigation ---
+                    b"h" | b"\x1b[D" => {
+                        cursor_col = cursor_col.saturating_sub(1);
                     }
-                    b"y" => {
-                        if let Some(m) = mark {
-                            let start = m.min(cursor);
-                            let end = m.max(cursor);
-                            let mut selected = Vec::new();
-                            for line in lines.iter().take(end + 1).skip(start) {
-                                selected.extend_from_slice(line);
-                                selected.push(b'\n');
+                    b"l" | b"\x1b[C" => {
+                        cursor_col = cursor_col.saturating_add(1);
+                    }
+                    // --- Word forward ---
+                    b"w" => {
+                        if let Some(line) = lines.get(cursor_line) {
+                            let text = String::from_utf8_lossy(line);
+                            let chars: Vec<char> = text.chars().collect();
+                            let mut c = cursor_col.min(chars.len());
+                            // Skip current word
+                            while c < chars.len() && !chars[c].is_ascii_whitespace() {
+                                c += 1;
                             }
-                            let _ = stdout.write_all(b"\x1b[?1049l");
-                            let _ = stdout.flush();
-                            return Some(selected);
+                            // Skip whitespace
+                            while c < chars.len() && chars[c].is_ascii_whitespace() {
+                                c += 1;
+                            }
+                            cursor_col = c;
                         }
                     }
-                    b"\x1b" => break,
-                    b"q" => break,
-                    b"\x0c" => {
-                        // Ctrl+L - redraw
+                    // --- Word backward ---
+                    b"b" => {
+                        if cursor_col > 0
+                            && let Some(line) = lines.get(cursor_line)
+                        {
+                            let text = String::from_utf8_lossy(line);
+                            let chars: Vec<char> = text.chars().collect();
+                            let mut c = cursor_col.min(chars.len()).saturating_sub(1);
+                            // Skip whitespace backward
+                            while c > 0 && chars[c].is_ascii_whitespace() {
+                                c = c.saturating_sub(1);
+                            }
+                            // Skip to start of word
+                            while c > 0 && !chars[c - 1].is_ascii_whitespace() {
+                                c = c.saturating_sub(1);
+                            }
+                            cursor_col = c;
+                        }
                     }
+                    // --- Line begin ---
+                    b"0" => cursor_col = 0,
+                    // --- First non-whitespace ---
+                    b"^" => {
+                        if let Some(line) = lines.get(cursor_line) {
+                            let text = String::from_utf8_lossy(line);
+                            cursor_col = text
+                                .chars()
+                                .position(|c| !c.is_ascii_whitespace())
+                                .unwrap_or(0);
+                        }
+                    }
+                    // --- Line end ---
+                    b"$" => {
+                        if let Some(line) = lines.get(cursor_line) {
+                            let text = String::from_utf8_lossy(line);
+                            cursor_col = text.chars().count().saturating_sub(1);
+                        }
+                    }
+                    // --- Top / bottom ---
+                    b"g" => {
+                        cursor_line = 0;
+                        cursor_col = 0;
+                    }
+                    b"G" => {
+                        cursor_line = lines.len() - 1;
+                        cursor_col = 0;
+                    }
+                    // --- Page up/down ---
                     b"\x06" => {
-                        // Ctrl+F - page down
-                        cursor = (cursor + page_size).min(lines.len() - 1);
+                        // Ctrl-F
+                        cursor_line = (cursor_line + page_size).min(lines.len() - 1);
                     }
                     b"\x02" => {
-                        // Ctrl+B - page up
-                        cursor = cursor.saturating_sub(page_size);
+                        // Ctrl-B
+                        cursor_line = cursor_line.saturating_sub(page_size);
                     }
+                    // --- Half page ---
+                    b"\x15" => {
+                        // Ctrl-U
+                        cursor_line = cursor_line.saturating_sub(page_size / 2);
+                    }
+                    b"\x04" => {
+                        // Ctrl-D
+                        cursor_line = (cursor_line + page_size / 2).min(lines.len() - 1);
+                    }
+                    // --- Mark / yank ---
+                    b" " => {
+                        if let Some(m) = mark_line {
+                            // Second mark: select and exit
+                            let selected = collect_selection(lines, m, cursor_line);
+                            let _ = stdout.write_all(b"\x1b[?25h"); // show cursor
+                            let _ = stdout.write_all(b"\x1b[?1049l");
+                            let _ = stdout.flush();
+                            return Some(selected);
+                        }
+                        mark_line = Some(cursor_line);
+                        _mark_col = Some(cursor_col);
+                    }
+                    b"v" => {
+                        // Visual mode: starts selection at current position
+                        mark_line = Some(cursor_line);
+                        _mark_col = Some(cursor_col);
+                    }
+                    b"V" => {
+                        // Visual line mode: select whole line
+                        mark_line = Some(cursor_line);
+                        _mark_col = Some(0);
+                    }
+                    b"y" => {
+                        if let Some(m) = mark_line {
+                            let selected = collect_selection(lines, m, cursor_line);
+                            let _ = stdout.write_all(b"\x1b[?25h");
+                            let _ = stdout.write_all(b"\x1b[?1049l");
+                            let _ = stdout.flush();
+                            return Some(selected);
+                        }
+                        // No mark: yank current line
+                        if let Some(line) = lines.get(cursor_line) {
+                            let mut selected = line.clone();
+                            selected.push(b'\n');
+                            let _ = stdout.write_all(b"\x1b[?25h");
+                            let _ = stdout.write_all(b"\x1b[?1049l");
+                            let _ = stdout.flush();
+                            return Some(selected);
+                        }
+                    }
+                    // --- Enter: copy selection or current line ---
+                    b"\r" | b"\n" => {
+                        if let Some(m) = mark_line {
+                            let selected = collect_selection(lines, m, cursor_line);
+                            let _ = stdout.write_all(b"\x1b[?25h");
+                            let _ = stdout.write_all(b"\x1b[?1049l");
+                            let _ = stdout.flush();
+                            return Some(selected);
+                        }
+                        if let Some(line) = lines.get(cursor_line) {
+                            let mut selected = line.clone();
+                            selected.push(b'\n');
+                            let _ = stdout.write_all(b"\x1b[?25h");
+                            let _ = stdout.write_all(b"\x1b[?1049l");
+                            let _ = stdout.flush();
+                            return Some(selected);
+                        }
+                    }
+                    // --- Search ---
+                    b"/" | b"?" => {
+                        let _ = stdout.write_all(
+                            format!("\x1b[H\x1b[{};1H\x1b[7m/\x1b[0m", term_rows).as_bytes(),
+                        );
+                        let _ = stdout.flush();
+                        let mut query = String::new();
+                        loop {
+                            match stdin.read(&mut buf) {
+                                Ok(0) => break,
+                                Ok(n2) => match &buf[..n2] {
+                                    [b'\r'] | [b'\n'] => {
+                                        if !query.is_empty() {
+                                            search_matches = find_matches(lines, &query);
+                                            search_match_idx = 0;
+                                            if let Some((line, col)) = search_matches.first() {
+                                                cursor_line = *line;
+                                                cursor_col = *col;
+                                            }
+                                        }
+                                        break;
+                                    }
+                                    [0x1b] | [0x03] => break, // Esc or Ctrl-C
+                                    [0x7f] | [b'\x08'] => {
+                                        query.pop();
+                                        // Redraw search prompt
+                                        let prompt = format!(
+                                            "\x1b[H\x1b[{};1H\x1b[7m/{}\x1b[0m\x1b[K",
+                                            term_rows, query
+                                        );
+                                        let _ = stdout.write_all(prompt.as_bytes());
+                                        let _ = stdout.flush();
+                                    }
+                                    [b] if *b >= 0x20 => {
+                                        query.push(*b as char);
+                                        let _ = stdout.write_all(&[*b]);
+                                        let _ = stdout.flush();
+                                    }
+                                    _ => {}
+                                },
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                    // --- Next/prev search match ---
+                    b"n" => {
+                        if !search_matches.is_empty() {
+                            search_match_idx = (search_match_idx + 1) % search_matches.len();
+                            let (line, col) = search_matches[search_match_idx];
+                            cursor_line = line;
+                            cursor_col = col;
+                        }
+                    }
+                    b"N" => {
+                        if !search_matches.is_empty() {
+                            search_match_idx = if search_match_idx == 0 {
+                                search_matches.len() - 1
+                            } else {
+                                search_match_idx - 1
+                            };
+                            let (line, col) = search_matches[search_match_idx];
+                            cursor_line = line;
+                            cursor_col = col;
+                        }
+                    }
+                    // --- Exit ---
+                    b"\x1b" | b"q" | [0x03] => break,
+                    b"\x0c" => {}   // Ctrl+L: force redraw
+                    b"\x1b[?" => {} // swallow partial escape sequences
                     _ => {}
                 }
             }
@@ -2779,6 +3213,7 @@ fn copy_mode_navigate(lines: &[Vec<u8>], _stream: &mut UnixStream) -> Option<Vec
     }
 
     // Restore
+    let _ = stdout.write_all(b"\x1b[?25h");
     let _ = stdout.write_all(b"\x1b[?1049l");
     let _ = stdout.flush();
     None

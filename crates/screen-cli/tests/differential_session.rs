@@ -134,7 +134,9 @@ fn attach_or_create_create_branch_compares_with_gnu_screen() {
         return;
     }
     if !screen_testkit::pty_available() {
-        eprintln!("skipping differential attach-or-create create test: PTY allocation not available");
+        eprintln!(
+            "skipping differential attach-or-create create test: PTY allocation not available"
+        );
         return;
     }
 
