@@ -910,6 +910,8 @@ fn attach_socket(
         let mut stdin = io::stdin().lock();
         let mut buffer = [0_u8; 4096];
         let mut prefix = false;
+        let mut digraph = 0u8; // 0=inactive, 1=first char pending, 2=second char pending
+        let mut digraph_chars = [0u8; 2];
         loop {
             match stdin.read(&mut buffer) {
                 Ok(0) => {
@@ -918,6 +920,23 @@ fn attach_socket(
                 }
                 Ok(read) => {
                     for byte in &buffer[..read] {
+                        // Digraph mode: collect two chars after C-a C-v
+                        if digraph > 0 {
+                            digraph_chars[(digraph - 1) as usize] = *byte;
+                            if digraph == 2 {
+                                if let Some(ch) = lookup_digraph(digraph_chars[0], digraph_chars[1])
+                                {
+                                    let mut buf = [0u8; 4];
+                                    let s = ch.encode_utf8(&mut buf);
+                                    let _ = Message::PtyInput(s.as_bytes().to_vec())
+                                        .write_to(&mut input_stream);
+                                }
+                                digraph = 0;
+                            } else {
+                                digraph += 1;
+                            }
+                            continue;
+                        }
                         if prefix {
                             prefix = false;
                             // Check custom bindings first
@@ -1213,8 +1232,9 @@ fn attach_socket(
                                     drop(stdout);
                                 }
                                 b'\x16' => {
-                                    // Digraph (C-a C-v)
-                                    // Client-side digraph mode — not implemented yet
+                                    // Digraph (C-a C-v) — enter digraph mode
+                                    // Next two bytes collected as digraph input
+                                    digraph = 1;
                                 }
                                 byte if byte == escape_prefix || byte == escape_meta => {
                                     // C-a C-a (other window) or C-a meta-char: send to window
@@ -1254,7 +1274,29 @@ fn attach_socket(
     });
 
     let mut stdout = io::stdout().lock();
+    // Print startup banner
+    let banner = format!(
+        "screen-rs {}  (C-a ? for help)\r\n",
+        env!("CARGO_PKG_VERSION")
+    );
+    let _ = stdout.write_all(banner.as_bytes());
+    let _ = stdout.flush();
+
+    let (mut last_cols, mut last_rows) = terminal_size().unwrap_or((80, 24));
     loop {
+        // Detect terminal resize and forward to daemon
+        #[allow(clippy::collapsible_if)]
+        if let Some((cols, rows)) = terminal_size() {
+            if cols != last_cols || rows != last_rows {
+                last_cols = cols;
+                last_rows = rows;
+                let _ = Message::Resize {
+                    columns: cols,
+                    rows,
+                }
+                .write_to(&mut stream);
+            }
+        }
         match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
             Message::PtyOutput(bytes) => {
                 stdout
@@ -2702,6 +2744,121 @@ fn normalize_exit_code(code: i32) -> u8 {
     } else {
         1
     }
+}
+
+/// Look up a two-character digraph (RFC 1345 subset).
+/// Returns the Unicode character if found.
+fn lookup_digraph(c1: u8, c2: u8) -> Option<char> {
+    // Try exact match first (for patterns involving quotes etc.)
+    if let Some(ch) = lookup_digraph_exact(c1, c2) {
+        return Some(ch);
+    }
+    // Map ASCII letters to uppercase for case-insensitive lookup
+    let a = c1.to_ascii_uppercase();
+    let b = c2.to_ascii_uppercase();
+    let ch = match (a, b) {
+        // Spacing characters
+        (b'N', b'S') => '\u{00A0}', // no-break space
+        // Latin-1 punctuation
+        (b'!', b'!') => '\u{00A1}',
+        (b'C', b'T') => '\u{00A2}', // cent
+        (b'P', b'O') => '\u{00A3}', // pound
+        (b'C', b'U') => '\u{00A4}', // currency
+        (b'Y', b'E') => '\u{00A5}', // yen
+        (b'B', b'B') => '\u{00A6}', // broken bar
+        (b'S', b'E') => '\u{00A7}', // section
+        (b'C', b'O') => '\u{00A9}', // copyright
+        (b'R', b'O') => '\u{00AE}', // registered
+        (b'D', b'G') => '\u{00B0}', // degree
+        (b'+', b'-') => '\u{00B1}', // plus-minus
+        (b'1', b'4') => '\u{00BC}', // 1/4
+        (b'1', b'2') => '\u{00BD}', // 1/2
+        (b'3', b'4') => '\u{00BE}', // 3/4
+        (b'*', b'X') => '\u{00D7}', // multiply
+        (b'-', b':') => '\u{00F7}', // divide
+        // Quotes and dashes
+        (b'<', b'<') => '\u{00AB}', // left double angle
+        (b'>', b'>') => '\u{00BB}', // right double angle
+        (b'-', b'-') => '\u{2013}', // en dash
+        (b'-', b'M') => '\u{2014}', // em dash
+        // Ligatures
+        (b'A', b'E') => '\u{00C6}',
+        (b'O', b'E') => '\u{0152}',
+        // Nordic
+        (b'A', b'A') => '\u{00C5}', // A ring
+        (b'O', b'/') => '\u{00D8}', // O stroke
+        (b'T', b'H') => '\u{00DE}', // thorn
+        (b'D', b'H') => '\u{00D0}', // eth
+        // Accented letters
+        (b'A', b'!') => '\u{00C0}', // A grave
+        (b'A', b'>') => '\u{00C2}', // A circumflex
+        (b'A', b'?') => '\u{00C3}', // A tilde
+        (b'A', b':') => '\u{00C4}', // A umlaut
+        (b'E', b'!') => '\u{00C8}', // E grave
+        (b'E', b'>') => '\u{00CA}', // E circumflex
+        (b'E', b':') => '\u{00CB}', // E umlaut
+        (b'I', b'!') => '\u{00CC}', // I grave
+        (b'I', b'>') => '\u{00CE}', // I circumflex
+        (b'I', b':') => '\u{00CF}', // I umlaut
+        (b'O', b'!') => '\u{00D2}', // O grave
+        (b'O', b'>') => '\u{00D4}', // O circumflex
+        (b'O', b'?') => '\u{00D5}', // O tilde
+        (b'O', b':') => '\u{00D6}', // O umlaut
+        (b'U', b'!') => '\u{00D9}', // U grave
+        (b'U', b'>') => '\u{00DB}', // U circumflex
+        (b'U', b':') => '\u{00DC}', // U umlaut
+        (b's', b's') => '\u{00DF}', // sharp s (case-sensitive)
+        // Special
+        (b'P', b'P') => '\u{00B6}', // pilcrow
+        (b'm', b'u') => '\u{00B5}', // micro
+        // Math/technical
+        (b'N', b'O') => '\u{00AC}', // not sign
+        (b'^', b'1') => '\u{00B9}', // superscript 1
+        (b'^', b'2') => '\u{00B2}', // superscript 2
+        (b'^', b'3') => '\u{00B3}', // superscript 3
+        _ => return None,
+    };
+    Some(ch)
+}
+
+/// Exact-match digraph lookup (for digraphs involving quotes, commas, etc.)
+fn lookup_digraph_exact(c1: u8, c2: u8) -> Option<char> {
+    // Acute accent (quote)
+    if c2 == b'\'' {
+        match c1 {
+            b'A' | b'a' => return Some(if c1 == b'A' { '\u{00C1}' } else { '\u{00E1}' }),
+            b'E' | b'e' => return Some(if c1 == b'E' { '\u{00C9}' } else { '\u{00E9}' }),
+            b'I' | b'i' => return Some(if c1 == b'I' { '\u{00CD}' } else { '\u{00ED}' }),
+            b'O' | b'o' => return Some(if c1 == b'O' { '\u{00D3}' } else { '\u{00F3}' }),
+            b'U' | b'u' => return Some(if c1 == b'U' { '\u{00DA}' } else { '\u{00FA}' }),
+            b'Y' | b'y' => return Some(if c1 == b'Y' { '\u{00DD}' } else { '\u{00FD}' }),
+            _ => return None,
+        }
+    }
+    // Cedilla
+    if c2 == b',' {
+        match c1 {
+            b'C' => return Some('\u{00C7}'),
+            b'c' => return Some('\u{00E7}'),
+            _ => return None,
+        }
+    }
+    // Grave (backtick) - some systems use ` instead of !
+    if c2 == b'`' {
+        match c1 {
+            b'A' | b'a' => return Some(if c1 == b'A' { '\u{00C0}' } else { '\u{00E0}' }),
+            b'E' | b'e' => return Some(if c1 == b'E' { '\u{00C8}' } else { '\u{00E8}' }),
+            b'I' | b'i' => return Some(if c1 == b'I' { '\u{00CC}' } else { '\u{00EC}' }),
+            b'O' | b'o' => return Some(if c1 == b'O' { '\u{00D2}' } else { '\u{00F2}' }),
+            b'U' | b'u' => return Some(if c1 == b'U' { '\u{00D9}' } else { '\u{00F9}' }),
+            _ => return None,
+        }
+    }
+    // Tilde (N/n-specific)
+    if c2 == b'?' && (c1 == b'N' || c1 == b'n') {
+        return Some(if c1 == b'N' { '\u{00D1}' } else { '\u{00F1}' });
+    }
+    None
 }
 
 fn stdin_is_tty() -> bool {
