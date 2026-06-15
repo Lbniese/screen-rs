@@ -71,6 +71,8 @@ pub enum Message {
     CopyModeData(Vec<Vec<u8>>),
     PasteRequest(Vec<u8>),
     HardstatusLine(Vec<u8>),
+    /// Caption line (always visible, distinct from hardstatus).
+    CaptionLine(Vec<u8>),
     RenumberWindow {
         number: u32,
     },
@@ -299,6 +301,7 @@ impl Message {
             }
             Self::PasteRequest(data) => (MessageKind::PasteRequest, checked_payload(data)?),
             Self::HardstatusLine(data) => (MessageKind::HardstatusLine, checked_payload(data)?),
+            Self::CaptionLine(data) => (MessageKind::CaptionLine, checked_payload(data)?),
             Self::RenumberWindow { number } => {
                 renumber_window_payload = number.to_be_bytes();
                 (MessageKind::RenumberWindow, &renumber_window_payload[..])
@@ -532,6 +535,7 @@ impl Message {
             }
             MessageKind::PasteRequest => Ok(Self::PasteRequest(payload.to_vec())),
             MessageKind::HardstatusLine => Ok(Self::HardstatusLine(payload.to_vec())),
+            MessageKind::CaptionLine => Ok(Self::CaptionLine(payload.to_vec())),
             MessageKind::RenumberWindow if payload.len() == 4 => {
                 let bytes: [u8; 4] = payload.try_into().unwrap();
                 Ok(Self::RenumberWindow {
@@ -698,6 +702,7 @@ enum MessageKind {
     CopyModeCopy = 61,
     CopyModePaste = 62,
     CopyModeCursor = 63,
+    CaptionLine = 64,
 }
 
 impl TryFrom<u8> for MessageKind {
@@ -768,6 +773,7 @@ impl TryFrom<u8> for MessageKind {
             61 => Ok(Self::CopyModeCopy),
             62 => Ok(Self::CopyModePaste),
             63 => Ok(Self::CopyModeCursor),
+            64 => Ok(Self::CaptionLine),
             255 => Ok(Self::Error),
             value => Err(ProtocolError::UnknownMessage(value)),
         }

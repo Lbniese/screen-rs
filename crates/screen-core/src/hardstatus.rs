@@ -51,6 +51,15 @@ pub fn expand_hardstatus(
                 b'W' => out.extend_from_slice(&format_window_list(windows, active_window, true)),
                 b'n' => out.extend_from_slice(format!("{active_window}").as_bytes()),
                 b't' => out.extend_from_slice(&escape_title(active_title)),
+                b'M' => {
+                    // Monitor flag for the active window
+                    #[allow(clippy::collapsible_if)]
+                    if let Some(w) = windows.iter().find(|w| w.number == active_window) {
+                        if w.flags & 4 != 0 {
+                            out.extend_from_slice(b"M");
+                        }
+                    }
+                }
                 b'=' => {
                     if right_index.is_none() {
                         right_index = Some(out.len());

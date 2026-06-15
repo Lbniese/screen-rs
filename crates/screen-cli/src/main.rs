@@ -703,6 +703,9 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
         if let Some(v) = screenrc.wall {
             config.wall = Some(v);
         }
+        if let Some(v) = screenrc.caption {
+            config.caption_format = Some(v);
+        }
         config.backtick = screenrc
             .backtick
             .into_iter()
@@ -904,6 +907,9 @@ fn attach_socket(
     // Visual bell toggle (C-a C-g)
     let visual_bell = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let visual_bell_clone = Arc::clone(&visual_bell);
+    // Lock screen state
+    let screen_locked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let screen_locked_clone = Arc::clone(&screen_locked);
     let escape_prefix = escape[0];
     let escape_meta = escape.get(1).copied().unwrap_or(escape_prefix);
     thread::spawn(move || {
@@ -919,6 +925,17 @@ fn attach_socket(
                     break;
                 }
                 Ok(read) => {
+                    // Lock screen: ignore all input except Enter to unlock
+                    if screen_locked_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                        for byte in &buffer[..read] {
+                            if *byte == b'\r' || *byte == b'\n' {
+                                screen_locked_clone
+                                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                                let _ = Message::Redisplay.write_to(&mut input_stream);
+                            }
+                        }
+                        continue;
+                    }
                     for byte in &buffer[..read] {
                         // Digraph mode: collect two chars after C-a C-v
                         if digraph > 0 {
@@ -1224,10 +1241,11 @@ fn attach_socket(
                                 }
                                 b'x' => {
                                     // Lock screen (C-a x)
+                                    screen_locked.store(true, std::sync::atomic::Ordering::Relaxed);
                                     let mut stdout = io::stdout().lock();
-                                    let msg =
-                                        b"\x1b[H\x1b[JScreen locked. Use password to unlock.\r\n";
-                                    let _ = stdout.write_all(msg);
+                                    let _ = stdout.write_all(b"\x1b[H\x1b[J");
+                                    let _ = stdout
+                                        .write_all(b"Screen locked. Press Enter to unlock.\r\n");
                                     let _ = stdout.flush();
                                     drop(stdout);
                                 }
@@ -1317,20 +1335,36 @@ fn attach_socket(
                 // Render hardstatus at bottom of terminal
                 let (cols, rows) = terminal_size().unwrap_or((80, 24));
                 let mut status = line.clone();
-                // Truncate to terminal width
                 status.truncate(cols as usize);
-                // Pad with spaces to terminal width (reverse video will fill)
                 while status.len() < cols as usize {
                     status.push(b' ');
                 }
-                // Save cursor, move to last line, write in reverse video, restore
                 let mut seq = Vec::new();
-                seq.extend_from_slice(b"\x1b7"); // save cursor
-                seq.extend_from_slice(format!("\x1b[{};1H", rows).as_bytes()); // move to last line
-                seq.extend_from_slice(b"\x1b[7m"); // reverse video
+                seq.extend_from_slice(b"\x1b7");
+                seq.extend_from_slice(format!("\x1b[{};1H", rows).as_bytes());
+                seq.extend_from_slice(b"\x1b[7m");
                 seq.extend_from_slice(&status);
-                seq.extend_from_slice(b"\x1b[0m"); // reset
-                seq.extend_from_slice(b"\x1b8"); // restore cursor
+                seq.extend_from_slice(b"\x1b[0m");
+                seq.extend_from_slice(b"\x1b8");
+                stdout.write_all(&seq).ok();
+                stdout.flush().ok();
+            }
+            Message::CaptionLine(line) => {
+                // Render caption above hardstatus (at row-1)
+                let (cols, rows) = terminal_size().unwrap_or((80, 24));
+                let caption_row = if rows > 1 { rows - 1 } else { rows };
+                let mut status = line.clone();
+                status.truncate(cols as usize);
+                while status.len() < cols as usize {
+                    status.push(b' ');
+                }
+                let mut seq = Vec::new();
+                seq.extend_from_slice(b"\x1b7");
+                seq.extend_from_slice(format!("\x1b[{};1H", caption_row).as_bytes());
+                seq.extend_from_slice(b"\x1b[7m");
+                seq.extend_from_slice(&status);
+                seq.extend_from_slice(b"\x1b[0m");
+                seq.extend_from_slice(b"\x1b8");
                 stdout.write_all(&seq).ok();
                 stdout.flush().ok();
             }

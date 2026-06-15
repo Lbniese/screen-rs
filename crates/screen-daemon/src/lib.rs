@@ -161,6 +161,8 @@ pub struct PtySessionConfig {
     pub client_timeout: Duration,
     pub output_buffer_limit: usize,
     pub hardstatus_format: Option<Vec<u8>>,
+    /// Caption line format (always visible, rendered above hardstatus).
+    pub caption_format: Option<Vec<u8>>,
     pub scrollback_limit: Option<u32>,
     /// Per-new-window defaults from config.
     pub default_monitor: Option<bool>,
@@ -250,6 +252,7 @@ impl PtySessionConfig {
             client_timeout: Duration::from_secs(5),
             output_buffer_limit: 1024 * 1024,
             hardstatus_format: None,
+            caption_format: None,
             scrollback_limit: None,
             default_monitor: None,
             default_flow: None,
@@ -316,6 +319,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     // Create the initial window
     let mut session = SessionState::new();
     session.hardstatus_format = config.hardstatus_format.clone();
+    session.caption_format = config.caption_format.clone();
     session.default_monitor = config.default_monitor;
     session.default_wrap = config.default_wrap;
     session.default_silence = config.default_silence;
@@ -1019,6 +1023,12 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                             broadcast(&mut clients, &Message::HardstatusLine(status))?;
                         }
                     }
+                    if session.caption_format.is_some() {
+                        let caption = session.format_caption();
+                        if !caption.is_empty() {
+                            broadcast(&mut clients, &Message::CaptionLine(caption))?;
+                        }
+                    }
                 }
                 ClientEvent::RemoveWindow(_id, number) => {
                     session.remove_window(number);
@@ -1543,6 +1553,12 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                 broadcast(&mut clients, &Message::HardstatusLine(status))?;
             }
         }
+        if session.caption_format.is_some() {
+            let caption = session.format_caption();
+            if !caption.is_empty() && !clients.is_empty() {
+                broadcast(&mut clients, &Message::CaptionLine(caption))?;
+            }
+        }
 
         thread::sleep(Duration::from_millis(10));
     }
@@ -1558,6 +1574,8 @@ struct SessionState {
     next_number: u32,
     paste_buffer: Vec<Vec<u8>>,
     hardstatus_format: Option<Vec<u8>>,
+    /// Caption line format (always visible, rendered above hardstatus).
+    caption_format: Option<Vec<u8>>,
     logging: bool,
     log_file: Option<std::path::PathBuf>,
     /// Named registers for copy mode.
@@ -1676,6 +1694,7 @@ impl SessionState {
             next_number: 0,
             paste_buffer: Vec::new(),
             hardstatus_format: None,
+            caption_format: None,
             logging: false,
             log_file: None,
             registers: std::collections::HashMap::new(),
@@ -1953,6 +1972,54 @@ impl SessionState {
             })
             .collect();
         // Use active window's terminal width for alignment (fallback 80)
+        let term_width = self
+            .windows
+            .get(self.selected)
+            .map(|w| w.terminal.dimensions.columns as usize)
+            .unwrap_or(80);
+        screen_core::hardstatus::expand_hardstatus(
+            format,
+            active_number,
+            &active_title,
+            &winfos,
+            SystemTime::now(),
+            term_width,
+        )
+    }
+
+    fn format_caption(&self) -> Vec<u8> {
+        let Some(format) = &self.caption_format else {
+            return Vec::new();
+        };
+        let active_number = self
+            .windows
+            .get(self.selected)
+            .map(|w| w.number)
+            .unwrap_or(0);
+        let active_title = self
+            .windows
+            .get(self.selected)
+            .and_then(|w| w.terminal.title.clone())
+            .unwrap_or_default();
+        let winfos: Vec<screen_core::hardstatus::WindowInfo> = self
+            .windows
+            .iter()
+            .filter(|w| w.alive)
+            .map(|w| screen_core::hardstatus::WindowInfo {
+                number: w.number,
+                flags: {
+                    let mut f = 0u8;
+                    if w.number == active_number {
+                        f |= 1;
+                    }
+                    if w.monitored {
+                        f |= 4;
+                    }
+                    f
+                },
+                title: w.terminal.title.clone().unwrap_or_default(),
+            })
+            .collect();
         let term_width = self
             .windows
             .get(self.selected)
