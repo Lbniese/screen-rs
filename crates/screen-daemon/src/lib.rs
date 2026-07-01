@@ -1181,7 +1181,42 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     }
                 }
                 ClientEvent::SplitVertical(_id) => {
-                    // Create a new region showing the next window
+                    // Column-based split: side-by-side regions
+                    if session.windows.len() > 1 {
+                        let next_idx = session.next_window_index(session.selected).unwrap_or(0);
+                        let total_cols = session
+                            .windows
+                            .get(session.selected)
+                            .map(|w| w.terminal.dimensions.columns)
+                            .unwrap_or(80);
+                        let half = total_cols / 2;
+                        let total_rows = session
+                            .windows
+                            .get(session.selected)
+                            .map(|w| w.terminal.dimensions.rows)
+                            .unwrap_or(24);
+                        session.regions = vec![
+                            Region {
+                                window_idx: session.selected,
+                                top: 0,
+                                height: total_rows,
+                                left: 0,
+                                width: half,
+                            },
+                            Region {
+                                window_idx: next_idx,
+                                top: 0,
+                                height: total_rows,
+                                left: half,
+                                width: total_cols - half,
+                            },
+                        ];
+                        session.focused_region = 0;
+                        broadcast_region_layout(&session, &mut clients)?;
+                    }
+                }
+                ClientEvent::SplitHorizontal(_id) => {
+                    // Row-based split: stacked regions
                     if session.windows.len() > 1 {
                         let next_idx = session.next_window_index(session.selected).unwrap_or(0);
                         let total_height = session
@@ -1190,21 +1225,23 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                             .map(|w| w.terminal.dimensions.rows)
                             .unwrap_or(24);
                         let half = total_height / 2;
-                        // Recompute regions: top half shows selected, bottom half shows next
                         session.regions = vec![
                             Region {
                                 window_idx: session.selected,
                                 top: 0,
                                 height: half,
+                                left: 0,
+                                width: 0,
                             },
                             Region {
                                 window_idx: next_idx,
                                 top: half,
                                 height: total_height - half,
+                                left: 0,
+                                width: 0,
                             },
                         ];
                         session.focused_region = 0;
-                        // Send redraw for each region
                         broadcast_region_layout(&session, &mut clients)?;
                     }
                 }
@@ -1652,6 +1689,10 @@ struct Region {
     top: u16,
     /// Height of this region in rows.
     height: u16,
+    /// Left column of this region (0 = row-based layout, >0 = column split).
+    left: u16,
+    /// Width of this region in columns.
+    width: u16,
 }
 
 #[derive(Debug)]
@@ -2168,15 +2209,21 @@ fn broadcast_region_layout(
     if session.regions.len() <= 1 {
         // Also send region layout metadata for status display
         if !session.regions.is_empty() {
-            let layout: Vec<(u32, u16, u16, bool)> = session
+            let layout: Vec<(u32, u16, u16, u16, u16, bool)> = session
                 .regions
                 .iter()
                 .enumerate()
                 .filter_map(|(i, r)| {
-                    session
-                        .windows
-                        .get(r.window_idx)
-                        .map(|w| (w.number, r.top, r.height, i == session.focused_region))
+                    session.windows.get(r.window_idx).map(|w| {
+                        (
+                            w.number,
+                            r.top,
+                            r.height,
+                            r.left,
+                            r.width,
+                            i == session.focused_region,
+                        )
+                    })
                 })
                 .collect();
             if !layout.is_empty() {
@@ -2189,15 +2236,21 @@ fn broadcast_region_layout(
     let composite = composite_regions(session);
     broadcast(clients, &Message::PtyOutput(composite))?;
     // Also send region layout metadata
-    let layout: Vec<(u32, u16, u16, bool)> = session
+    let layout: Vec<(u32, u16, u16, u16, u16, bool)> = session
         .regions
         .iter()
         .enumerate()
         .filter_map(|(i, r)| {
-            session
-                .windows
-                .get(r.window_idx)
-                .map(|w| (w.number, r.top, r.height, i == session.focused_region))
+            session.windows.get(r.window_idx).map(|w| {
+                (
+                    w.number,
+                    r.top,
+                    r.height,
+                    r.left,
+                    r.width,
+                    i == session.focused_region,
+                )
+            })
         })
         .collect();
     if !layout.is_empty() {
@@ -2212,73 +2265,136 @@ fn composite_regions(session: &SessionState) -> Vec<u8> {
         return Vec::new();
     }
 
-    let total_cols = session
-        .windows
-        .iter()
-        .find(|_| true)
+    let first_window = session.windows.iter().find(|_| true);
+    let total_cols = first_window
         .map(|w| w.terminal.dimensions.columns)
         .unwrap_or(80);
+    let total_rows = first_window
+        .map(|w| w.terminal.dimensions.rows)
+        .unwrap_or(24);
+
+    let is_column_split = session.regions[0].width > 0;
 
     let mut output = Vec::new();
-    // Hide cursor, clear screen
     output.extend_from_slice(b"\x1b[?25l\x1b[H\x1b[J");
 
-    for (i, region) in session.regions.iter().enumerate() {
-        if let Some(window) = session.windows.get(region.window_idx) {
-            let rows = window.terminal.dimensions.rows;
-            let region_height = region.height.min(rows);
-
-            for row in 0..region_height {
-                let screen_row = region.top + row;
-                // Position cursor to this row
-                output.extend_from_slice(b"\x1b[");
-                write_usize_buffer(&mut output, screen_row as usize + 1);
-                output.extend_from_slice(b";1H");
-
-                // Draw the row content
-                if let Some(line) = window.terminal.line_bytes(row) {
-                    output.extend_from_slice(&line);
+    if is_column_split {
+        for screen_row in 0..total_rows {
+            output.extend_from_slice(b"\x1b[");
+            write_usize_buffer(&mut output, screen_row as usize + 1);
+            output.extend_from_slice(b";1H");
+            for (i, region) in session.regions.iter().enumerate() {
+                if let Some(window) = session.windows.get(region.window_idx) {
+                    let region_width = region.width.min(total_cols - region.left);
+                    if let Some(line) = window.terminal.line_bytes(screen_row) {
+                        let row_bytes = line_from_bytes_padded(&line, region_width);
+                        output.extend_from_slice(&row_bytes);
+                    } else {
+                        output.extend(std::iter::repeat_n(b' ', region_width as usize));
+                    }
+                    if i + 1 < session.regions.len() {
+                        output.extend_from_slice(b"\x1b[7m \x1b[0m");
+                    }
                 }
-                // Clear to end of line
-                output.extend_from_slice(b"\x1b[K");
             }
-
-            // Clear any remaining rows in this region (if terminal is smaller than region)
-            for row in rows..region.height {
-                let screen_row = region.top + row;
-                output.extend_from_slice(b"\x1b[");
-                write_usize_buffer(&mut output, screen_row as usize + 1);
-                output.extend_from_slice(b";1H\x1b[K");
-            }
-
-            // Draw separator line between regions
-            if i + 1 < session.regions.len() {
-                let sep_row = region.top + region.height;
-                output.extend_from_slice(b"\x1b[");
-                write_usize_buffer(&mut output, sep_row as usize + 1);
-                output.extend_from_slice(b";1H");
-                output.extend_from_slice(b"\x1b[7m");
-                output.extend(std::iter::repeat_n(b'-', total_cols as usize));
-                output.extend_from_slice(b"\x1b[0m");
+            output.extend_from_slice(b"\x1b[K");
+        }
+    } else {
+        for (i, region) in session.regions.iter().enumerate() {
+            if let Some(window) = session.windows.get(region.window_idx) {
+                let rows = window.terminal.dimensions.rows;
+                let region_height = region.height.min(rows);
+                for row in 0..region_height {
+                    let screen_row = region.top + row;
+                    output.extend_from_slice(b"\x1b[");
+                    write_usize_buffer(&mut output, screen_row as usize + 1);
+                    output.extend_from_slice(b";1H");
+                    if let Some(line) = window.terminal.line_bytes(row) {
+                        output.extend_from_slice(&line);
+                    }
+                    output.extend_from_slice(b"\x1b[K");
+                }
+                for row in rows..region.height {
+                    let screen_row = region.top + row;
+                    output.extend_from_slice(b"\x1b[");
+                    write_usize_buffer(&mut output, screen_row as usize + 1);
+                    output.extend_from_slice(b";1H\x1b[K");
+                }
+                if i + 1 < session.regions.len() {
+                    let sep_row = region.top + region.height;
+                    output.extend_from_slice(b"\x1b[");
+                    write_usize_buffer(&mut output, sep_row as usize + 1);
+                    output.extend_from_slice(b";1H\x1b[7m");
+                    output.extend(std::iter::repeat_n(b'-', total_cols as usize));
+                    output.extend_from_slice(b"\x1b[0m");
+                }
             }
         }
     }
 
-    // Show cursor at focused region's window cursor position
     if let Some(region) = session.regions.get(session.focused_region)
         && let Some(window) = session.windows.get(region.window_idx)
     {
-        let cursor_col = window.terminal.cursor.column + 1;
-        let cursor_row = region.top + window.terminal.cursor.row + 1;
+        let cursor_col = if is_column_split {
+            region.left + window.terminal.cursor.column + 1
+        } else {
+            window.terminal.cursor.column + 1
+        };
+        let cursor_row = if is_column_split {
+            window.terminal.cursor.row + 1
+        } else {
+            region.top + window.terminal.cursor.row + 1
+        };
         output.extend_from_slice(b"\x1b[");
         write_usize_buffer(&mut output, cursor_row as usize);
         output.push(b';');
         write_usize_buffer(&mut output, cursor_col as usize);
         output.push(b'H');
     }
-    output.extend_from_slice(b"\x1b[?25h");
 
+    output.extend_from_slice(b"\x1b[?25h");
     output
+}
+
+fn line_from_bytes_padded(line: &[u8], display_width: u16) -> Vec<u8> {
+    let mut out = Vec::with_capacity(display_width as usize);
+    let mut col: u16 = 0;
+    let mut i = 0;
+    let line_len = line.len();
+    while i < line_len && col < display_width {
+        if line[i] == 0x1b {
+            out.push(0x1b);
+            i += 1;
+            while i < line_len
+                && line[i] != b'm'
+                && line[i] != b'H'
+                && line[i] != b'J'
+                && line[i] != b'K'
+                && line[i] != b'A'
+                && line[i] != b'B'
+                && line[i] != b'C'
+                && line[i] != b'D'
+                && line[i] != b'h'
+                && line[i] != b'l'
+            {
+                out.push(line[i]);
+                i += 1;
+            }
+            if i < line_len {
+                out.push(line[i]);
+                i += 1;
+            }
+        } else {
+            out.push(line[i]);
+            col += 1;
+            i += 1;
+        }
+    }
+    while col < display_width {
+        out.push(b' ');
+        col += 1;
+    }
+    out
 }
 
 fn write_usize_buffer(output: &mut Vec<u8>, n: usize) {
@@ -2646,6 +2762,7 @@ enum ClientEvent {
     Hardcopy(u64, u32, Vec<u8>),
     /// Region split/control.
     SplitVertical(u64),
+    SplitHorizontal(u64),
     RemoveRegion(u64),
     OnlyWindow(u64),
     FocusNextRegion(u64),
@@ -3194,6 +3311,9 @@ fn spawn_client_reader(id: u64, mut stream: UnixStream, client_tx: &mpsc::Sender
                 }
                 Ok(Message::SplitVertical) => {
                     let _ = client_tx.send(ClientEvent::SplitVertical(id));
+                }
+                Ok(Message::SplitHorizontal) => {
+                    let _ = client_tx.send(ClientEvent::SplitHorizontal(id));
                 }
                 Ok(Message::RemoveRegion) => {
                     let _ = client_tx.send(ClientEvent::RemoveRegion(id));

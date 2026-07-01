@@ -1027,7 +1027,11 @@ fn attach_socket(
                                     let _ = std::fs::write("/tmp/screen-exchange", data);
                                 }
                                 b'S' => {
-                                    // Split display
+                                    // Split display horizontally (row-based)
+                                    let _ = Message::SplitHorizontal.write_to(&mut input_stream);
+                                }
+                                b'|' => {
+                                    // Split display vertically (column-based)
                                     let _ = Message::SplitVertical.write_to(&mut input_stream);
                                 }
                                 b'Q' => {
@@ -1187,6 +1191,8 @@ fn attach_socket(
                                         C-a [  copy     C-a ]  paste     C-a <    readbuf\r\n\
                                         C-a >  writebuf C-a =  removebuf C-a {/}  history\r\n\
                                         C-a M  monitor  C-a _  silence   C-a r    wrap\r\n\
+                                        C-a S  split-h  C-a |  split-v  C-a Q    only\r\n\
+                                        C-a tab focus    C-a x  lock      C-a C-v  digraph\r\n\
                                         C-a i  info     C-a t  time      C-a v    version\r\n\
                                         C-a '  select   C-a \"  winlist   C-a C-a  other\r\n\
                                         C-a :  command  C-a ?  help      C-a ,    license\r\n\

@@ -146,12 +146,13 @@ pub enum Message {
     /// Write current terminal contents to a file (hardcopy).
     Hardcopy(u32, Vec<u8>),
     SplitVertical,
+    SplitHorizontal,
     RemoveRegion,
     OnlyWindow,
     FocusNext,
     FocusPrev,
     ResizeRegion(i16),
-    RegionLayout(Vec<(u32, u16, u16, bool)>),
+    RegionLayout(Vec<(u32, u16, u16, u16, u16, bool)>),
     /// Copy mode: move cursor up/down in scrollback.
     CopyModeMove(i32),
     /// Copy mode: set mark at current position.
@@ -381,6 +382,7 @@ impl Message {
                 (MessageKind::AtWindow, checked_payload(&at_window_payload)?)
             }
             Self::SplitVertical => (MessageKind::SplitVertical, &[][..]),
+            Self::SplitHorizontal => (MessageKind::SplitHorizontal, &[][..]),
             Self::RemoveRegion => (MessageKind::RemoveRegion, &[][..]),
             Self::OnlyWindow => (MessageKind::OnlyWindow, &[][..]),
             Self::FocusNext => (MessageKind::FocusNext, &[][..]),
@@ -601,6 +603,7 @@ impl Message {
                 Ok(Self::AtWindow(num, payload[4..].to_vec()))
             }
             MessageKind::SplitVertical => Ok(Self::SplitVertical),
+            MessageKind::SplitHorizontal => Ok(Self::SplitHorizontal),
             MessageKind::RemoveRegion => Ok(Self::RemoveRegion),
             MessageKind::OnlyWindow => Ok(Self::OnlyWindow),
             MessageKind::FocusNext => Ok(Self::FocusNext),
@@ -703,6 +706,7 @@ enum MessageKind {
     CopyModePaste = 62,
     CopyModeCursor = 63,
     CaptionLine = 64,
+    SplitHorizontal = 65,
 }
 
 impl TryFrom<u8> for MessageKind {
@@ -1020,26 +1024,30 @@ impl Error for ProtocolError {
     }
 }
 
-fn encode_region_layout(regions: &[(u32, u16, u16, bool)]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(regions.len() * 9);
-    for (num, top, height, focused) in regions {
+fn encode_region_layout(regions: &[(u32, u16, u16, u16, u16, bool)]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(regions.len() * 13);
+    for (num, top, height, left, width, focused) in regions {
         buf.extend_from_slice(&num.to_be_bytes());
         buf.extend_from_slice(&top.to_be_bytes());
         buf.extend_from_slice(&height.to_be_bytes());
+        buf.extend_from_slice(&left.to_be_bytes());
+        buf.extend_from_slice(&width.to_be_bytes());
         buf.push(if *focused { 1 } else { 0 });
     }
     buf
 }
 
-fn decode_region_layout(payload: &[u8]) -> Vec<(u32, u16, u16, bool)> {
+fn decode_region_layout(payload: &[u8]) -> Vec<(u32, u16, u16, u16, u16, bool)> {
     payload
-        .chunks_exact(9)
+        .chunks_exact(13)
         .map(|c| {
             let num = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
             let top = u16::from_be_bytes([c[4], c[5]]);
             let height = u16::from_be_bytes([c[6], c[7]]);
-            let focused = c[8] != 0;
-            (num, top, height, focused)
+            let left = u16::from_be_bytes([c[8], c[9]]);
+            let width = u16::from_be_bytes([c[10], c[11]]);
+            let focused = c[12] != 0;
+            (num, top, height, left, width, focused)
         })
         .collect()
 }
