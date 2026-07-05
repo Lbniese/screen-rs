@@ -1679,6 +1679,9 @@ struct SessionState {
     multiuser: bool,
     /// ACL entries for multi-user access.
     acl: Vec<AclEntry>,
+    /// Cached output from backtick commands: id -> (output, last_run).
+    backtick_outputs:
+        std::cell::RefCell<std::collections::HashMap<u8, (Vec<u8>, std::time::SystemTime)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1774,6 +1777,7 @@ impl SessionState {
             markkeys: None,
             multiuser: false,
             acl: Vec::new(),
+            backtick_outputs: std::cell::RefCell::new(std::collections::HashMap::new()),
         }
     }
 
@@ -1988,10 +1992,39 @@ impl SessionState {
     }
 
     #[allow(dead_code)]
+    fn refresh_backticks(&self) {
+        let mut outputs = self.backtick_outputs.borrow_mut();
+        let now = std::time::SystemTime::now();
+        for bt in &self.backtick {
+            if let Some((_, last_run)) = outputs.get(&(bt.id as u8)) {
+                let elapsed = now.duration_since(*last_run).unwrap_or_default();
+                if elapsed.as_secs() < bt.refresh_secs.unwrap_or(10) as u64 {
+                    continue;
+                }
+            }
+            // Run the command
+            let result = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&bt.command)
+                .output()
+                .map(|o| {
+                    let mut out = o.stdout;
+                    // Trim trailing newline
+                    while out.last() == Some(&b'\n') {
+                        out.pop();
+                    }
+                    out
+                })
+                .unwrap_or_default();
+            outputs.insert(bt.id as u8, (result, now));
+        }
+    }
+
     fn format_hardstatus(&self) -> Vec<u8> {
         let Some(format) = &self.hardstatus_format else {
             return Vec::new();
         };
+        self.refresh_backticks();
         let active_number = self
             .windows
             .get(self.selected)
@@ -2018,6 +2051,12 @@ impl SessionState {
             .get(self.selected)
             .map(|w| w.terminal.dimensions.columns as usize)
             .unwrap_or(80);
+        let backtick_outputs = self.backtick_outputs.borrow();
+        let backtick_map: std::collections::HashMap<u8, Vec<u8>> = backtick_outputs
+            .iter()
+            .map(|(k, (v, _))| (*k, v.clone()))
+            .collect();
+        drop(backtick_outputs);
         screen_core::hardstatus::expand_hardstatus(
             format,
             active_number,
@@ -2025,6 +2064,7 @@ impl SessionState {
             &winfos,
             SystemTime::now(),
             term_width,
+            &backtick_map,
         )
     }
 
@@ -2066,6 +2106,13 @@ impl SessionState {
             .get(self.selected)
             .map(|w| w.terminal.dimensions.columns as usize)
             .unwrap_or(80);
+        self.refresh_backticks();
+        let backtick_outputs = self.backtick_outputs.borrow();
+        let backtick_map: std::collections::HashMap<u8, Vec<u8>> = backtick_outputs
+            .iter()
+            .map(|(k, (v, _))| (*k, v.clone()))
+            .collect();
+        drop(backtick_outputs);
         screen_core::hardstatus::expand_hardstatus(
             format,
             active_number,
@@ -2073,6 +2120,7 @@ impl SessionState {
             &winfos,
             SystemTime::now(),
             term_width,
+            &backtick_map,
         )
     }
 

@@ -27,6 +27,7 @@ pub fn expand_hardstatus(
     windows: &[WindowInfo],
     now: SystemTime,
     terminal_width: usize,
+    backtick_outputs: &std::collections::HashMap<u8, Vec<u8>>,
 ) -> Vec<u8> {
     let host = hostname();
     let mut out = Vec::with_capacity(format.len() + 32);
@@ -115,6 +116,12 @@ pub fn expand_hardstatus(
                                 _ => {}
                             }
                         }
+                    }
+                }
+                b'0'..=b'9' => {
+                    let idx = esc - b'0';
+                    if let Some(output) = backtick_outputs.get(&idx) {
+                        out.extend_from_slice(output);
                     }
                 }
                 _ => {
@@ -241,13 +248,29 @@ mod tests {
 
     #[test]
     fn hostname_expands() {
-        let result = expand_hardstatus(b"%H", 0, b"", &[], test_time(), 80);
+        let result = expand_hardstatus(
+            b"%H",
+            0,
+            b"",
+            &[],
+            test_time(),
+            80,
+            &std::collections::HashMap::new(),
+        );
         assert!(!result.is_empty());
     }
 
     #[test]
     fn datetime_expands() {
-        let result = expand_hardstatus(b"%d/%m/%Y %c", 0, b"", &[], test_time(), 80);
+        let result = expand_hardstatus(
+            b"%d/%m/%Y %c",
+            0,
+            b"",
+            &[],
+            test_time(),
+            80,
+            &std::collections::HashMap::new(),
+        );
         let s = String::from_utf8_lossy(&result);
         assert!(s.contains("/2025"), "{s}");
         assert!(s.contains("14:30"), "{s}");
@@ -267,20 +290,44 @@ mod tests {
                 title: b"htop".to_vec(),
             },
         ];
-        let result = expand_hardstatus(b"%w", 1, b"", &wins, test_time(), 80);
+        let result = expand_hardstatus(
+            b"%w",
+            1,
+            b"",
+            &wins,
+            test_time(),
+            80,
+            &std::collections::HashMap::new(),
+        );
         let s = String::from_utf8_lossy(&result);
         assert_eq!(s, "0- 1*");
     }
 
     #[test]
     fn literal_percent() {
-        let result = expand_hardstatus(b"100%%", 0, b"", &[], test_time(), 80);
+        let result = expand_hardstatus(
+            b"100%%",
+            0,
+            b"",
+            &[],
+            test_time(),
+            80,
+            &std::collections::HashMap::new(),
+        );
         assert_eq!(String::from_utf8_lossy(&result), "100%");
     }
 
     #[test]
     fn right_align() {
-        let result = expand_hardstatus(b"left%=right", 0, b"", &[], test_time(), 80);
+        let result = expand_hardstatus(
+            b"left%=right",
+            0,
+            b"",
+            &[],
+            test_time(),
+            80,
+            &std::collections::HashMap::new(),
+        );
         let s = String::from_utf8_lossy(&result);
         assert!(s.starts_with("left"));
         assert!(s.ends_with("right"));
@@ -289,13 +336,29 @@ mod tests {
 
     #[test]
     fn window_number_and_title() {
-        let result = expand_hardstatus(b"%n %t", 3, b"hello", &[], test_time(), 80);
+        let result = expand_hardstatus(
+            b"%n %t",
+            3,
+            b"hello",
+            &[],
+            test_time(),
+            80,
+            &std::collections::HashMap::new(),
+        );
         assert_eq!(String::from_utf8_lossy(&result), "3 hello");
     }
 
     #[test]
     fn skips_color_attributes() {
-        let result = expand_hardstatus(b"%{=b bc}%n", 0, b"", &[], test_time(), 80);
+        let result = expand_hardstatus(
+            b"%{=b bc}%n",
+            0,
+            b"",
+            &[],
+            test_time(),
+            80,
+            &std::collections::HashMap::new(),
+        );
         assert_eq!(String::from_utf8_lossy(&result), "0");
     }
 }
