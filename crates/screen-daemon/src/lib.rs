@@ -320,6 +320,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     let mut session = SessionState::new();
     session.hardstatus_format = config.hardstatus_format.clone();
     session.caption_format = config.caption_format.clone();
+    session.slowpaste = config.slowpaste;
     session.default_monitor = config.default_monitor;
     session.default_wrap = config.default_wrap;
     session.default_silence = config.default_silence;
@@ -1621,6 +1622,8 @@ struct SessionState {
     exchange_file: Option<PathBuf>,
     /// Flow control state.
     flow_control: bool,
+    /// Slow paste delay in ms (0 = disabled).
+    slowpaste: Option<u32>,
     /// Last message displayed via Echo/Activity/etc.
     last_message: Vec<u8>,
     /// Config defaults for new windows.
@@ -1744,6 +1747,7 @@ impl SessionState {
             registers: std::collections::HashMap::new(),
             exchange_file: None,
             flow_control: false,
+            slowpaste: None,
             last_message: Vec::new(),
             default_monitor: None,
             default_wrap: None,
@@ -1852,10 +1856,19 @@ impl SessionState {
     }
 
     fn write_to_window(&mut self, idx: usize, bytes: &[u8]) -> Result<(), DaemonError> {
+        let slowpaste_ms = self.slowpaste.unwrap_or(0);
         if let Some(window) = self.windows.get_mut(idx)
             && let Some(pty) = &mut window.pty
         {
-            pty.write_all(bytes).map_err(DaemonError::Pty)?;
+            if slowpaste_ms > 0 && bytes.len() > 1 {
+                // Slow paste: write one byte at a time with delay
+                for &b in bytes {
+                    pty.write_all(&[b]).map_err(DaemonError::Pty)?;
+                    std::thread::sleep(std::time::Duration::from_millis(slowpaste_ms as u64));
+                }
+            } else {
+                pty.write_all(bytes).map_err(DaemonError::Pty)?;
+            }
         }
         Ok(())
     }
