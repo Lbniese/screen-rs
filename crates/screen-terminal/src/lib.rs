@@ -470,6 +470,8 @@ pub struct TerminalState {
     g1_charset_pending: bool,
     /// Set to true when BEL (0x07) is received; consumer resets with [`take_bell`].
     bell_occurred: bool,
+    bce_mode: bool,
+    compact_history: bool,
 }
 
 impl TerminalState {
@@ -498,6 +500,8 @@ impl TerminalState {
             g0_charset_pending: false,
             g1_charset_pending: false,
             bell_occurred: false,
+            bce_mode: false,
+            compact_history: false,
         }
     }
 
@@ -611,6 +615,26 @@ impl TerminalState {
         occurred
     }
 
+    fn erase_style(&self) -> Style {
+        if self.bce_mode {
+            Style {
+                foreground: self.current_style.foreground,
+                background: self.current_style.background,
+                ..Style::default()
+            }
+        } else {
+            self.current_style
+        }
+    }
+
+    pub fn set_bce(&mut self, enabled: bool) {
+        self.bce_mode = enabled;
+    }
+
+    pub fn set_compact_history(&mut self, enabled: bool) {
+        self.compact_history = enabled;
+    }
+
     /// Resize the terminal, growing or shrinking grids.
     pub fn resize(&mut self, dimensions: Dimensions) {
         let dimensions = dimensions.normalized();
@@ -665,6 +689,71 @@ impl TerminalState {
     }
 
     fn apply_byte(&mut self, byte: u8) {
+        // C1 control character conversion to 7-bit equivalents.
+        if matches!(
+            self.parser,
+            ParserState::Ground | ParserState::Escape | ParserState::Csi(_) | ParserState::Osc(_)
+        ) {
+            match byte {
+                0x84 => {
+                    self.apply_byte(0x1b);
+                    self.apply_byte(b'D');
+                    return;
+                }
+                0x85 => {
+                    self.apply_byte(0x1b);
+                    self.apply_byte(b'E');
+                    return;
+                }
+                0x88 => {
+                    self.apply_byte(0x1b);
+                    self.apply_byte(b'H');
+                    return;
+                }
+                0x8d => {
+                    self.apply_byte(0x1b);
+                    self.apply_byte(b'M');
+                    return;
+                }
+                0x8e => {
+                    self.apply_byte(0x1b);
+                    self.apply_byte(b'N');
+                    return;
+                }
+                0x8f => {
+                    self.apply_byte(0x1b);
+                    self.apply_byte(b'O');
+                    return;
+                }
+                0x90 => {
+                    self.apply_byte(0x1b);
+                    self.apply_byte(b'P');
+                    return;
+                }
+                0x98 => {
+                    self.apply_byte(0x1b);
+                    self.apply_byte(b'X');
+                    return;
+                }
+                0x9a => {
+                    self.apply_byte(0x1b);
+                    self.apply_byte(b'Z');
+                    return;
+                }
+                0x9b => {
+                    self.apply_byte(0x1b);
+                    self.apply_byte(b'[');
+                    return;
+                }
+                0x9c => {
+                    self.apply_byte(0x1b);
+                    self.apply_byte(b'\\');
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         let parser = std::mem::replace(&mut self.parser, ParserState::Ground);
         self.parser = match parser {
             ParserState::Ground => self.apply_ground(byte),
@@ -1486,6 +1575,18 @@ impl TerminalState {
     }
 
     fn push_scrollback_line(&mut self, line: Vec<Cell>) {
+        if self.scrollback_max == 0 {
+            return;
+        }
+        if self.compact_history {
+            let new_is_empty = line.iter().all(|c| c.is_blank());
+            if let Some(last) = self.scrollback.last()
+                && last.iter().all(|c| c.is_blank())
+                && new_is_empty
+            {
+                return;
+            }
+        }
         while self.scrollback.len() >= self.scrollback_max as usize {
             self.scrollback.remove(0);
         }
@@ -1497,7 +1598,7 @@ impl TerminalState {
     fn erase_display(&mut self, mode: u16) {
         let col = self.cursor.column;
         let row = self.cursor.row;
-        let style = self.current_style;
+        let style = self.erase_style();
         let area = self.grid().area();
         let cursor_pos = self.grid().index(col, row);
         let grid = self.grid_mut();
@@ -1513,7 +1614,7 @@ impl TerminalState {
         let col = self.cursor.column;
         let row = self.cursor.row;
         let cols = self.dimensions.columns;
-        let style = self.current_style;
+        let style = self.erase_style();
         let row_start = self.grid().index(0, row);
         let cursor_idx = self.grid().index(col, row);
         let row_end = row_start + usize::from(cols);

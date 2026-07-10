@@ -321,6 +321,8 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     session.hardstatus_format = config.hardstatus_format.clone();
     session.caption_format = config.caption_format.clone();
     session.slowpaste = config.slowpaste;
+    session.bce = config.bce.unwrap_or(false);
+    session.compact_history = config.compacthist.unwrap_or(false);
     session.default_monitor = config.default_monitor;
     session.default_wrap = config.default_wrap;
     session.default_silence = config.default_silence;
@@ -1624,6 +1626,10 @@ struct SessionState {
     flow_control: bool,
     /// Slow paste delay in ms (0 = disabled).
     slowpaste: Option<u32>,
+    /// Background Color Erase mode.
+    bce: bool,
+    /// Compact history: merge consecutive empty lines.
+    compact_history: bool,
     /// Last message displayed via Echo/Activity/etc.
     last_message: Vec<u8>,
     /// Config defaults for new windows.
@@ -1748,6 +1754,8 @@ impl SessionState {
             exchange_file: None,
             flow_control: false,
             slowpaste: None,
+            bce: false,
+            compact_history: false,
             last_message: Vec::new(),
             default_monitor: None,
             default_wrap: None,
@@ -1823,6 +1831,12 @@ impl SessionState {
         let mut terminal = TerminalState::new(Dimensions::new(size.columns, size.rows));
         if let Some(limit) = scrollback_limit {
             terminal.set_scrollback_limit(limit);
+        }
+        if self.bce {
+            terminal.set_bce(true);
+        }
+        if self.compact_history {
+            terminal.set_compact_history(true);
         }
 
         let window = ManagedWindow {
