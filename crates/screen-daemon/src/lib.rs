@@ -1445,6 +1445,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         let _ = pty.write_all(&responses);
                     }
                     window.last_activity = SystemTime::now();
+                    window.activity_notified = true;
 
                     // Broadcast title change to all clients
                     if window.terminal.title != old_title
@@ -1724,6 +1725,8 @@ struct ManagedWindow {
     last_activity: SystemTime,
     /// Whether line wrapping is enabled.
     wrap_enabled: bool,
+    /// Activity flag: set when output received, cleared on window list broadcast.
+    activity_notified: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1851,6 +1854,7 @@ impl SessionState {
             silence_timeout: self.default_silence.unwrap_or(0),
             last_activity: SystemTime::now(),
             wrap_enabled: self.default_wrap.unwrap_or(true),
+            activity_notified: false,
         };
 
         self.windows.push(window);
@@ -2068,7 +2072,13 @@ impl SessionState {
             .filter(|w| w.alive)
             .map(|w| screen_core::hardstatus::WindowInfo {
                 number: w.number,
-                flags: if w.number == active_number { 1 } else { 0 },
+                flags: {
+                    let mut f = if w.number == active_number { 1 } else { 0 };
+                    if w.activity_notified && w.number != active_number {
+                        f |= 2;
+                    }
+                    f
+                },
                 title: w.terminal.title.clone().unwrap_or_default(),
             })
             .collect();
@@ -2119,6 +2129,9 @@ impl SessionState {
                     let mut f = 0u8;
                     if w.number == active_number {
                         f |= 1;
+                    }
+                    if w.activity_notified && w.number != active_number {
+                        f |= 2;
                     }
                     if w.monitored {
                         f |= 4;

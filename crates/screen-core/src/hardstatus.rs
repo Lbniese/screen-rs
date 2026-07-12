@@ -202,7 +202,13 @@ fn format_window_list(windows: &[WindowInfo], active: u32, show_flags: bool) -> 
         if i > 0 {
             out.push(b' ');
         }
-        let marker = if w.number == active { '*' } else { '-' };
+        let marker = if w.number == active {
+            '*'
+        } else if w.flags & 2 != 0 {
+            '@'
+        } else {
+            '-'
+        };
         out.extend_from_slice(format!("{}{}", w.number, marker).as_bytes());
         if show_flags && w.flags != 0 {
             out.extend_from_slice(format!(":f{}", w.flags).as_bytes());
