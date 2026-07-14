@@ -1352,6 +1352,14 @@ fn attach_socket(
             Message::ChildExited(code) => return Ok(normalize_exit_code(code)),
             Message::Error(bytes) => return Err(String::from_utf8_lossy(&bytes).into_owned()),
             Message::Detach => return Ok(0),
+            Message::Suspend => {
+                // Send SIGTSTP to ourselves (like GNU Screen C-a z)
+                #[cfg(unix)]
+                unsafe {
+                    libc::kill(libc::getpid(), libc::SIGTSTP);
+                }
+                // After SIGCONT resumes us, continue the event loop
+            }
             Message::CopyModeData(lines) => {
                 // Enter local copy mode with scrollback lines
                 if let Some(selected) = copy_mode_navigate(&lines, &mut stream) {

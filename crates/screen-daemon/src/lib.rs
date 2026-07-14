@@ -4354,9 +4354,9 @@ C-a :     colon       Enter command\n";
             }
         }
         "suspend" => {
-            // Detach all clients (user resumes with screen -r)
+            // Send Suspend to all clients; they signal themselves with SIGTSTP
             for client in clients.iter_mut() {
-                let _ = Message::Detach.write_to(&mut client.stream);
+                let _ = Message::Suspend.write_to(&mut client.stream);
             }
         }
         "next" => {

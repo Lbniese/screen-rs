@@ -84,6 +84,8 @@ pub enum Message {
     },
     /// Remove all dead windows from the session.
     WipeDeadWindows,
+    /// Suspend session (C-a z / SIGTSTP).
+    Suspend,
     /// Display a short message on all attached clients.
     Echo(Vec<u8>),
     /// Enable or disable logging for the current window.
@@ -314,6 +316,7 @@ impl Message {
                 (MessageKind::RemoveWindow, &remove_window_payload[..])
             }
             Self::WipeDeadWindows => (MessageKind::WipeDeadWindows, &[]),
+            Self::Suspend => (MessageKind::Suspend, &[]),
             Self::Echo(payload) => (MessageKind::Echo, checked_payload(payload)?),
             Self::LogToggle { enable } => {
                 log_toggle_payload = [*enable as u8];
@@ -605,6 +608,7 @@ impl Message {
             }
             MessageKind::SplitVertical => Ok(Self::SplitVertical),
             MessageKind::SplitHorizontal => Ok(Self::SplitHorizontal),
+            MessageKind::Suspend => Ok(Self::Suspend),
             MessageKind::RemoveRegion => Ok(Self::RemoveRegion),
             MessageKind::OnlyWindow => Ok(Self::OnlyWindow),
             MessageKind::FocusNext => Ok(Self::FocusNext),
@@ -708,6 +712,7 @@ enum MessageKind {
     CopyModeCursor = 63,
     CaptionLine = 64,
     SplitHorizontal = 65,
+    Suspend = 66,
 }
 
 impl TryFrom<u8> for MessageKind {
