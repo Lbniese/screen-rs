@@ -12,6 +12,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, SystemTime};
 
+mod encoding;
+
 use screen_protocol::{Message, ProtocolError, WindowInfoMsg};
 use screen_pty::{PtyCommand, PtyError, PtyProcess, PtySize};
 use screen_terminal::{Dimensions, TerminalState};
@@ -221,6 +223,8 @@ pub struct PtySessionConfig {
     pub zmodem: Option<bool>,
     /// Mouse tracking enabled.
     pub mousetrack: Option<bool>,
+    /// Termcap/terminfo overrides from config.
+    pub termcap_overrides: Vec<(Vec<u8>, Vec<u8>)>,
     /// Wall message.
     pub wall: Option<Vec<u8>>,
     /// Backtick commands.
@@ -300,6 +304,7 @@ impl PtySessionConfig {
             nonblock: None,
             zmodem: None,
             mousetrack: None,
+            termcap_overrides: Vec::new(),
             wall: None,
             backtick: Vec::new(),
             setenv: Vec::new(),
@@ -368,6 +373,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     if let Some(v) = config.zmodem {
         session.zmodem = v;
     }
+    session.termcap_overrides = config.termcap_overrides.clone();
     if let Some(v) = config.mousetrack {
         session.mousetrack = v;
     }
@@ -1617,11 +1623,17 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         let _ = f.flush();
                     }
                     window.buffer_output(&output, config.output_buffer_limit);
+                    // Convert output encoding if needed
+                    let encoded_output = if let Some(ref enc) = window.encoding {
+                        encoding::pty_to_utf8(&output, Some(enc))
+                    } else {
+                        output.clone()
+                    };
                     // Send to clients
                     if region_mode {
                         needs_composite = true;
                     } else {
-                        broadcast_to_clients_viewing(&mut clients, idx, &output)?;
+                        broadcast_to_clients_viewing(&mut clients, idx, &encoded_output)?;
                     }
                 }
             }
@@ -1764,6 +1776,8 @@ struct SessionState {
     zmodem: bool,
     /// Mouse tracking enabled.
     mousetrack: bool,
+    /// Termcap/terminfo overrides.
+    termcap_overrides: Vec<(Vec<u8>, Vec<u8>)>,
     /// Wall message.
     wall: Option<Vec<u8>>,
     /// Backtick commands to run.
@@ -1884,6 +1898,8 @@ struct ManagedWindow {
     /// Zmodem: whether we're in a zmodem transfer.
     #[allow(dead_code)]
     zmodem_active: bool,
+    /// Character encoding for this window (e.g., "UTF-8", "ISO-8859-1").
+    encoding: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1938,6 +1954,7 @@ impl SessionState {
             hardcopy_append: false,
             zmodem: false,
             mousetrack: false,
+            termcap_overrides: Vec::new(),
             wall: None,
             backtick: Vec::new(),
             msgwait: 5,
@@ -2041,6 +2058,7 @@ impl SessionState {
             activity_notified: false,
             group: self.default_group.clone(),
             zmodem_active: false,
+            encoding: self.encoding.clone(),
         };
 
         self.windows.push(window);
@@ -2064,14 +2082,19 @@ impl SessionState {
         if let Some(window) = self.windows.get_mut(idx)
             && let Some(pty) = &mut window.pty
         {
-            if slowpaste_ms > 0 && bytes.len() > 1 {
-                // Slow paste: write one byte at a time with delay
-                for &b in bytes {
+            // Convert input from UTF-8 to window encoding if needed
+            let encoded = if let Some(ref enc) = window.encoding {
+                encoding::utf8_to_pty(bytes, Some(enc))
+            } else {
+                bytes.to_vec()
+            };
+            if slowpaste_ms > 0 && encoded.len() > 1 {
+                for &b in &encoded {
                     pty.write_all(&[b]).map_err(DaemonError::Pty)?;
                     std::thread::sleep(std::time::Duration::from_millis(slowpaste_ms as u64));
                 }
             } else {
-                pty.write_all(bytes).map_err(DaemonError::Pty)?;
+                pty.write_all(&encoded).map_err(DaemonError::Pty)?;
             }
         }
         Ok(())
@@ -3154,6 +3177,20 @@ fn accept_connections(
                             }
                         }
                         clear_client_read_timeout(&stream)?;
+                        // Send current bindings to the new client
+                        let mut all_bindings: Vec<(u8, Vec<u8>)> = session
+                            .bindkeys
+                            .iter()
+                            .map(|(k, v)| (*k, v.concat()))
+                            .collect();
+                        if let Some(ref kbmap) = session.key_bindings {
+                            for (k, v) in kbmap {
+                                all_bindings.push((*k, v.concat()));
+                            }
+                        }
+                        if !all_bindings.is_empty() {
+                            let _ = Message::BindingsUpdate(all_bindings).write_to(&mut stream);
+                        }
                         let id = *next_client_id;
                         *next_client_id += 1;
                         spawn_client_reader(
@@ -4718,7 +4755,14 @@ WALL: {}
                     let key_byte = key.as_bytes().first().copied().unwrap_or(0);
                     let mut kbmap = session.key_bindings.clone().unwrap_or_default();
                     kbmap.insert(key_byte, cmd_parts.clone());
+                    // Build notification list before moving kbmap
+                    let all: Vec<(u8, Vec<u8>)> =
+                        kbmap.iter().map(|(k, v)| (*k, v.concat())).collect();
                     session.key_bindings = Some(kbmap);
+                    // Notify clients about binding updates
+                    for client in clients.iter_mut() {
+                        let _ = Message::BindingsUpdate(all.clone()).write_to(&mut client.stream);
+                    }
                 }
             }
         }
@@ -4729,6 +4773,15 @@ WALL: {}
                 if !key.is_empty() && !cmd_parts.is_empty() {
                     let key_byte = key.as_bytes().first().copied().unwrap_or(0);
                     session.bindkeys.push((key_byte, cmd_parts));
+                    // Notify clients about binding updates
+                    let all: Vec<(u8, Vec<u8>)> = session
+                        .bindkeys
+                        .iter()
+                        .map(|(k, v)| (*k, v.concat()))
+                        .collect();
+                    for client in clients.iter_mut() {
+                        let _ = Message::BindingsUpdate(all.clone()).write_to(&mut client.stream);
+                    }
                 }
             }
         }

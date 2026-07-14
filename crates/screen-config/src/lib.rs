@@ -87,6 +87,8 @@ pub struct ScreenConfig {
     pub hardcopy_append: Option<bool>,
     /// Non-blocking I/O mode.
     pub nonblock: Option<bool>,
+    /// Termcap/terminfo overrides: (term_name, capability_string).
+    pub termcap_overrides: Vec<(Vec<u8>, Vec<u8>)>,
     /// Zmodem catch support.
     pub zmodem: Option<bool>,
     /// Mouse tracking mode.
@@ -390,10 +392,11 @@ fn execute_command(
             })?);
         }
         b"termcap" | b"terminfo" => {
-            // Accepted but no runtime effect for now — store as termcap override
-            // Parsed as: termcap <term> <cap-string>
+            // Store termcap/terminfo override: termcap <term> <cap-string>
             if args.len() >= 2 {
-                // ignore for now
+                config
+                    .termcap_overrides
+                    .push((args[0].clone(), args[1].clone()));
             }
         }
         b"bind" => {
@@ -1250,12 +1253,13 @@ mod tests {
     }
 
     #[test]
-    fn termcap_and_terminfo_accepted_but_ignored() {
+    fn termcap_and_terminfo_stored_as_overrides() {
         let config = parse_config(
             b"termcap xterm 'AF=\\E[3%dm:AB=\\E[4%dm'\nterminfo xterm 'AF=\\E[3%dm'\n",
         )
         .expect("config parses");
-        // Should not panic, just be absorbed
+        assert_eq!(config.termcap_overrides.len(), 2);
+        assert_eq!(config.termcap_overrides[0].0, b"xterm");
         assert!(config.term.is_none());
     }
 

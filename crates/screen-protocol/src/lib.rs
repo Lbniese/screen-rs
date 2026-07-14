@@ -84,6 +84,8 @@ pub enum Message {
     },
     /// Remove all dead windows from the session.
     WipeDeadWindows,
+    /// Update client-side key bindings: (key_byte, command_bytes).
+    BindingsUpdate(Vec<(u8, Vec<u8>)>),
     /// Suspend session (C-a z / SIGTSTP).
     Suspend,
     /// Display a short message on all attached clients.
@@ -197,6 +199,7 @@ impl Message {
         let flow_toggle_payload;
         let break_payload;
         let search_result_payload;
+        let bindings_payload;
         let hardcopy_payload;
         let resize_region_payload;
         let region_layout_payload;
@@ -317,6 +320,13 @@ impl Message {
             }
             Self::WipeDeadWindows => (MessageKind::WipeDeadWindows, &[]),
             Self::Suspend => (MessageKind::Suspend, &[]),
+            Self::BindingsUpdate(list) => {
+                bindings_payload = encode_bindings_update(list);
+                (
+                    MessageKind::BindingsUpdate,
+                    checked_payload(&bindings_payload)?,
+                )
+            }
             Self::Echo(payload) => (MessageKind::Echo, checked_payload(payload)?),
             Self::LogToggle { enable } => {
                 log_toggle_payload = [*enable as u8];
@@ -609,6 +619,10 @@ impl Message {
             MessageKind::SplitVertical => Ok(Self::SplitVertical),
             MessageKind::SplitHorizontal => Ok(Self::SplitHorizontal),
             MessageKind::Suspend => Ok(Self::Suspend),
+            MessageKind::BindingsUpdate => {
+                let list = decode_bindings_update(&payload)?;
+                Ok(Self::BindingsUpdate(list))
+            }
             MessageKind::RemoveRegion => Ok(Self::RemoveRegion),
             MessageKind::OnlyWindow => Ok(Self::OnlyWindow),
             MessageKind::FocusNext => Ok(Self::FocusNext),
@@ -713,6 +727,7 @@ enum MessageKind {
     CaptionLine = 64,
     SplitHorizontal = 65,
     Suspend = 66,
+    BindingsUpdate = 67,
 }
 
 impl TryFrom<u8> for MessageKind {
@@ -795,6 +810,43 @@ fn checked_payload(payload: &[u8]) -> Result<&[u8], ProtocolError> {
         return Err(ProtocolError::PayloadTooLarge(payload.len()));
     }
     Ok(payload)
+}
+
+fn encode_bindings_update(list: &[(u8, Vec<u8>)]) -> Vec<u8> {
+    let size: usize = 4 + list.iter().map(|(_, cmd)| 1 + 2 + cmd.len()).sum::<usize>();
+    let mut buf = Vec::with_capacity(size);
+    buf.extend_from_slice(&(list.len() as u32).to_be_bytes());
+    for (key, cmd) in list {
+        buf.push(*key);
+        buf.extend_from_slice(&(cmd.len() as u16).to_be_bytes());
+        buf.extend_from_slice(cmd);
+    }
+    buf
+}
+
+fn decode_bindings_update(payload: &[u8]) -> Result<Vec<(u8, Vec<u8>)>, ProtocolError> {
+    if payload.len() < 4 {
+        return Err(ProtocolError::PayloadTooLarge(0));
+    }
+    let count = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+    let mut list = Vec::with_capacity(count);
+    let mut pos = 4;
+    for _ in 0..count {
+        if pos + 3 > payload.len() {
+            return Err(ProtocolError::PayloadTooLarge(0));
+        }
+        let key = payload[pos];
+        pos += 1;
+        let cmd_len = u16::from_be_bytes([payload[pos], payload[pos + 1]]) as usize;
+        pos += 2;
+        if pos + cmd_len > payload.len() {
+            return Err(ProtocolError::PayloadTooLarge(0));
+        }
+        let cmd = payload[pos..pos + cmd_len].to_vec();
+        pos += cmd_len;
+        list.push((key, cmd));
+    }
+    Ok(list)
 }
 
 fn encode_create_window(program: &[u8], args: &[Vec<u8>]) -> Vec<u8> {

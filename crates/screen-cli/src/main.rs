@@ -1330,6 +1330,10 @@ fn attach_socket(
     let _ = stdout.write_all(banner.as_bytes());
     let _ = stdout.flush();
 
+    // Runtime bindings from daemon (updated via BindingsUpdate messages)
+    let runtime_bindings: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u8, Vec<u8>>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
     let (mut last_cols, mut last_rows) = terminal_size().unwrap_or((80, 24));
     loop {
         // Detect terminal resize and forward to daemon
@@ -1362,6 +1366,13 @@ fn attach_socket(
                     libc::kill(libc::getpid(), libc::SIGTSTP);
                 }
                 // After SIGCONT resumes us, continue the event loop
+            }
+            Message::BindingsUpdate(list) => {
+                let mut map = runtime_bindings.lock().unwrap();
+                map.clear();
+                for (key, cmd) in list {
+                    map.insert(key, cmd);
+                }
             }
             Message::CopyModeData(lines) => {
                 // Enter local copy mode with scrollback lines
