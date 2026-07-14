@@ -472,6 +472,7 @@ pub struct TerminalState {
     bell_occurred: bool,
     bce_mode: bool,
     compact_history: bool,
+    sorendition: bool,
 }
 
 impl TerminalState {
@@ -502,6 +503,7 @@ impl TerminalState {
             bell_occurred: false,
             bce_mode: false,
             compact_history: false,
+            sorendition: false,
         }
     }
 
@@ -633,6 +635,10 @@ impl TerminalState {
 
     pub fn set_compact_history(&mut self, enabled: bool) {
         self.compact_history = enabled;
+    }
+
+    pub fn set_sorendition(&mut self, enabled: bool) {
+        self.sorendition = enabled;
     }
 
     /// Resize the terminal, growing or shrinking grids.
@@ -1379,7 +1385,16 @@ impl TerminalState {
                 3 => self.current_style.italic = true,
                 4 => self.current_style.underline = true,
                 5 => self.current_style.blink = true,
-                7 => self.current_style.reverse = true,
+                7 => {
+                    self.current_style.reverse = true;
+                    if self.sorendition {
+                        // Standout: bright white on blue instead of just reverse
+                        self.current_style.foreground = Some(Color::Basic(7));
+                        self.current_style.background = Some(Color::Basic(4));
+                        self.current_style.bold = true;
+                        self.current_style.reverse = false;
+                    }
+                }
                 22 => self.current_style.bold = false,
                 23 => self.current_style.italic = false,
                 24 => self.current_style.underline = false,

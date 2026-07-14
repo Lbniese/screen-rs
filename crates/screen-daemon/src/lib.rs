@@ -1486,6 +1486,19 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     // Feed output through the terminal engine for scrollback tracking
                     let old_title = window.terminal.title.clone();
                     let responses = window.terminal.apply(&output);
+                    // Zmodem detection: when enabled, check for transfer start/end
+                    if session.zmodem {
+                        let z_start: &[u8] = b"**\x18B00";
+                        let z_end: &[u8] = b"**\x18B08";
+                        if !window.zmodem_active
+                            && output.windows(z_start.len()).any(|w| w == z_start)
+                        {
+                            window.zmodem_active = true;
+                        }
+                        if window.zmodem_active && output.windows(z_end.len()).any(|w| w == z_end) {
+                            window.zmodem_active = false;
+                        }
+                    }
                     // Write terminal query responses back to the pty
                     if !responses.is_empty() {
                         let _ = pty.write_all(&responses);
