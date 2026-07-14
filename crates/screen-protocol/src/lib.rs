@@ -170,6 +170,7 @@ pub struct WindowInfoMsg {
     pub number: u32,
     pub flags: u8,
     pub title: Vec<u8>,
+    pub group: Option<Vec<u8>>,
 }
 
 impl Message {
@@ -843,6 +844,13 @@ fn encode_window_list(list: &[WindowInfoMsg]) -> Vec<u8> {
     for w in list {
         buf.extend_from_slice(&w.number.to_be_bytes());
         buf.push(w.flags);
+        // group: length-prefixed (u16), 0-length means None
+        if let Some(ref g) = w.group {
+            buf.extend_from_slice(&(g.len() as u16).to_be_bytes());
+            buf.extend_from_slice(g);
+        } else {
+            buf.extend_from_slice(&0u16.to_be_bytes());
+        }
         buf.extend_from_slice(&(w.title.len() as u16).to_be_bytes());
         buf.extend_from_slice(&w.title);
     }
@@ -857,7 +865,7 @@ fn decode_window_list(payload: &[u8]) -> Result<Vec<WindowInfoMsg>, &'static str
     let mut pos = 2;
     let mut list = Vec::with_capacity(count);
     for _ in 0..count {
-        if pos + 5 > payload.len() {
+        if pos + 7 > payload.len() {
             return Err("window entry truncated");
         }
         let number = u32::from_be_bytes([
@@ -868,6 +876,21 @@ fn decode_window_list(payload: &[u8]) -> Result<Vec<WindowInfoMsg>, &'static str
         ]);
         let flags = payload[pos + 4];
         pos += 5;
+        if pos + 2 > payload.len() {
+            return Err("group length truncated");
+        }
+        let group_len = u16::from_be_bytes([payload[pos], payload[pos + 1]]) as usize;
+        pos += 2;
+        let group = if group_len == 0 {
+            None
+        } else {
+            if pos + group_len > payload.len() {
+                return Err("group bytes truncated");
+            }
+            let g = payload[pos..pos + group_len].to_vec();
+            pos += group_len;
+            Some(g)
+        };
         if pos + 2 > payload.len() {
             return Err("title length truncated");
         }
@@ -882,6 +905,7 @@ fn decode_window_list(payload: &[u8]) -> Result<Vec<WindowInfoMsg>, &'static str
             number,
             flags,
             title,
+            group,
         });
     }
     Ok(list)

@@ -2250,6 +2250,7 @@ impl SessionState {
                     f
                 },
                 title: w.terminal.title.clone().unwrap_or_default(),
+                group: w.group.clone(),
             })
             .collect();
         // Use active window's terminal width for alignment (fallback 80)
@@ -2309,6 +2310,7 @@ impl SessionState {
                     f
                 },
                 title: w.terminal.title.clone().unwrap_or_default(),
+                group: w.group.clone(),
             })
             .collect();
         let term_width = self
@@ -2447,6 +2449,7 @@ fn send_window_list_to_client(
                 number: w.number,
                 flags,
                 title: w.terminal.title.clone().unwrap_or_default(),
+                group: w.group.clone(),
             }
         })
         .collect();
@@ -3427,6 +3430,7 @@ fn accept_connections(
                                     0
                                 },
                                 title: w.terminal.title.clone().unwrap_or_default(),
+                                group: w.group.clone(),
                             })
                             .collect();
                         Message::WindowList(list).write_to(&mut stream)?;

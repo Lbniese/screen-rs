@@ -52,6 +52,14 @@ pub fn expand_hardstatus(
                 b'W' => out.extend_from_slice(&format_window_list(windows, active_window, true)),
                 b'n' => out.extend_from_slice(format!("{active_window}").as_bytes()),
                 b't' => out.extend_from_slice(&escape_title(active_title)),
+                b'G' => {
+                    // Group name of active window
+                    if let Some(w) = windows.iter().find(|w| w.number == active_window)
+                        && let Some(ref g) = w.group
+                    {
+                        out.extend_from_slice(g);
+                    }
+                }
                 b'M' => {
                     // Monitor flag for the active window
                     #[allow(clippy::collapsible_if)]
@@ -158,6 +166,7 @@ pub struct WindowInfo {
     pub number: u32,
     pub flags: u8,
     pub title: Vec<u8>,
+    pub group: Option<Vec<u8>>,
 }
 
 fn hostname() -> String {
@@ -289,11 +298,13 @@ mod tests {
                 number: 0,
                 flags: 1,
                 title: b"bash".to_vec(),
+                group: None,
             },
             WindowInfo {
                 number: 1,
                 flags: 0,
                 title: b"htop".to_vec(),
+                group: None,
             },
         ];
         let result = expand_hardstatus(
