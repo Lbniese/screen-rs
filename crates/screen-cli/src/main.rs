@@ -2892,40 +2892,367 @@ fn lookup_digraph(c1: u8, c2: u8) -> Option<char> {
 
 /// Exact-match digraph lookup (for digraphs involving quotes, commas, etc.)
 fn lookup_digraph_exact(c1: u8, c2: u8) -> Option<char> {
-    // Acute accent (quote)
-    if c2 == b'\'' {
-        match c1 {
-            b'A' | b'a' => return Some(if c1 == b'A' { '\u{00C1}' } else { '\u{00E1}' }),
-            b'E' | b'e' => return Some(if c1 == b'E' { '\u{00C9}' } else { '\u{00E9}' }),
-            b'I' | b'i' => return Some(if c1 == b'I' { '\u{00CD}' } else { '\u{00ED}' }),
-            b'O' | b'o' => return Some(if c1 == b'O' { '\u{00D3}' } else { '\u{00F3}' }),
-            b'U' | b'u' => return Some(if c1 == b'U' { '\u{00DA}' } else { '\u{00FA}' }),
-            b'Y' | b'y' => return Some(if c1 == b'Y' { '\u{00DD}' } else { '\u{00FD}' }),
+    match c2 {
+        // Acute accent (quote)
+        b'\'' => match c1 {
+            b'A' => return Some('\u{00C1}'),
+            b'a' => return Some('\u{00E1}'),
+            b'C' => return Some('\u{0106}'),
+            b'c' => return Some('\u{0107}'),
+            b'E' => return Some('\u{00C9}'),
+            b'e' => return Some('\u{00E9}'),
+            b'G' => return Some('\u{01F4}'),
+            b'g' => return Some('\u{01F5}'),
+            b'I' => return Some('\u{00CD}'),
+            b'i' => return Some('\u{00ED}'),
+            b'K' => return Some('\u{1E30}'),
+            b'k' => return Some('\u{1E31}'),
+            b'L' => return Some('\u{0139}'),
+            b'l' => return Some('\u{013A}'),
+            b'M' => return Some('\u{1E3E}'),
+            b'm' => return Some('\u{1E3F}'),
+            b'N' => return Some('\u{0143}'),
+            b'n' => return Some('\u{0144}'),
+            b'O' => return Some('\u{00D3}'),
+            b'o' => return Some('\u{00F3}'),
+            b'P' => return Some('\u{1E54}'),
+            b'p' => return Some('\u{1E55}'),
+            b'R' => return Some('\u{0154}'),
+            b'r' => return Some('\u{0155}'),
+            b'S' => return Some('\u{015A}'),
+            b's' => return Some('\u{015B}'),
+            b'U' => return Some('\u{00DA}'),
+            b'u' => return Some('\u{00FA}'),
+            b'W' => return Some('\u{1E82}'),
+            b'w' => return Some('\u{1E83}'),
+            b'Y' => return Some('\u{00DD}'),
+            b'y' => return Some('\u{00FD}'),
+            b'Z' => return Some('\u{0179}'),
+            b'z' => return Some('\u{017A}'),
             _ => return None,
-        }
-    }
-    // Cedilla
-    if c2 == b',' {
-        match c1 {
+        },
+        // Grave accent
+        b'`' => match c1 {
+            b'A' => return Some('\u{00C0}'),
+            b'a' => return Some('\u{00E0}'),
+            b'E' => return Some('\u{00C8}'),
+            b'e' => return Some('\u{00E8}'),
+            b'I' => return Some('\u{00CC}'),
+            b'i' => return Some('\u{00EC}'),
+            b'N' => return Some('\u{01F8}'),
+            b'n' => return Some('\u{01F9}'),
+            b'O' => return Some('\u{00D2}'),
+            b'o' => return Some('\u{00F2}'),
+            b'U' => return Some('\u{00D9}'),
+            b'u' => return Some('\u{00F9}'),
+            b'W' => return Some('\u{1E80}'),
+            b'w' => return Some('\u{1E81}'),
+            b'Y' => return Some('\u{1EF2}'),
+            b'y' => return Some('\u{1EF3}'),
+            _ => return None,
+        },
+        // Circumflex
+        b'^' => match c1 {
+            b'A' => return Some('\u{00C2}'),
+            b'a' => return Some('\u{00E2}'),
+            b'C' => return Some('\u{0108}'),
+            b'c' => return Some('\u{0109}'),
+            b'E' => return Some('\u{00CA}'),
+            b'e' => return Some('\u{00EA}'),
+            b'G' => return Some('\u{011C}'),
+            b'g' => return Some('\u{011D}'),
+            b'H' => return Some('\u{0124}'),
+            b'h' => return Some('\u{0125}'),
+            b'I' => return Some('\u{00CE}'),
+            b'i' => return Some('\u{00EE}'),
+            b'J' => return Some('\u{0134}'),
+            b'j' => return Some('\u{0135}'),
+            b'O' => return Some('\u{00D4}'),
+            b'o' => return Some('\u{00F4}'),
+            b'S' => return Some('\u{015C}'),
+            b's' => return Some('\u{015D}'),
+            b'U' => return Some('\u{00DB}'),
+            b'u' => return Some('\u{00FB}'),
+            b'W' => return Some('\u{0174}'),
+            b'w' => return Some('\u{0175}'),
+            b'Y' => return Some('\u{0176}'),
+            b'y' => return Some('\u{0177}'),
+            b'Z' => return Some('\u{1E90}'),
+            b'z' => return Some('\u{1E91}'),
+            _ => return None,
+        },
+        // Diaeresis / Umlaut (double-quote)
+        b'"' => match c1 {
+            b'A' => return Some('\u{00C4}'),
+            b'a' => return Some('\u{00E4}'),
+            b'E' => return Some('\u{00CB}'),
+            b'e' => return Some('\u{00EB}'),
+            b'H' => return Some('\u{1E26}'),
+            b'h' => return Some('\u{1E27}'),
+            b'I' => return Some('\u{00CF}'),
+            b'i' => return Some('\u{00EF}'),
+            b'O' => return Some('\u{00D6}'),
+            b'o' => return Some('\u{00F6}'),
+            b'U' => return Some('\u{00DC}'),
+            b'u' => return Some('\u{00FC}'),
+            b'W' => return Some('\u{1E84}'),
+            b'w' => return Some('\u{1E85}'),
+            b'X' => return Some('\u{1E8C}'),
+            b'x' => return Some('\u{1E8D}'),
+            b'Y' => return Some('\u{0178}'),
+            b'y' => return Some('\u{00FF}'),
+            b't' => return Some('\u{1E97}'), // t with diaeresis
+            _ => return None,
+        },
+        // Tilde
+        b'~' => match c1 {
+            b'A' => return Some('\u{00C3}'),
+            b'a' => return Some('\u{00E3}'),
+            b'I' => return Some('\u{0128}'),
+            b'i' => return Some('\u{0129}'),
+            b'N' => return Some('\u{00D1}'),
+            b'n' => return Some('\u{00F1}'),
+            b'O' => return Some('\u{00D5}'),
+            b'o' => return Some('\u{00F5}'),
+            b'U' => return Some('\u{0168}'),
+            b'u' => return Some('\u{0169}'),
+            _ => return None,
+        },
+        // Cedilla / Comma
+        b',' => match c1 {
             b'C' => return Some('\u{00C7}'),
             b'c' => return Some('\u{00E7}'),
+            b'G' => return Some('\u{0122}'),
+            b'g' => return Some('\u{0123}'),
+            b'K' => return Some('\u{0136}'),
+            b'k' => return Some('\u{0137}'),
+            b'L' => return Some('\u{013B}'),
+            b'l' => return Some('\u{013C}'),
+            b'N' => return Some('\u{0145}'),
+            b'n' => return Some('\u{0146}'),
+            b'R' => return Some('\u{0156}'),
+            b'r' => return Some('\u{0157}'),
+            b'S' => return Some('\u{015E}'),
+            b's' => return Some('\u{015F}'),
+            b'T' => return Some('\u{0162}'),
+            b't' => return Some('\u{0163}'),
             _ => return None,
-        }
-    }
-    // Grave (backtick) - some systems use ` instead of !
-    if c2 == b'`' {
-        match c1 {
-            b'A' | b'a' => return Some(if c1 == b'A' { '\u{00C0}' } else { '\u{00E0}' }),
-            b'E' | b'e' => return Some(if c1 == b'E' { '\u{00C8}' } else { '\u{00E8}' }),
-            b'I' | b'i' => return Some(if c1 == b'I' { '\u{00CC}' } else { '\u{00EC}' }),
-            b'O' | b'o' => return Some(if c1 == b'O' { '\u{00D2}' } else { '\u{00F2}' }),
-            b'U' | b'u' => return Some(if c1 == b'U' { '\u{00D9}' } else { '\u{00F9}' }),
+        },
+        // Macron / Overbar (hyphen)
+        b'-' => match c1 {
+            b'A' => return Some('\u{0100}'),
+            b'a' => return Some('\u{0101}'),
+            b'E' => return Some('\u{0112}'),
+            b'e' => return Some('\u{0113}'),
+            b'I' => return Some('\u{012A}'),
+            b'i' => return Some('\u{012B}'),
+            b'O' => return Some('\u{014C}'),
+            b'o' => return Some('\u{014D}'),
+            b'U' => return Some('\u{016A}'),
+            b'u' => return Some('\u{016B}'),
             _ => return None,
-        }
+        },
+        // Breve / Inverted breve
+        b'(' => match c1 {
+            // Breve: u-shape
+            b'A' => return Some('\u{0102}'),
+            b'a' => return Some('\u{0103}'),
+            b'E' => return Some('\u{0114}'),
+            b'e' => return Some('\u{0115}'),
+            b'G' => return Some('\u{011E}'),
+            b'g' => return Some('\u{011F}'),
+            b'I' => return Some('\u{012C}'),
+            b'i' => return Some('\u{012D}'),
+            b'O' => return Some('\u{014E}'),
+            b'o' => return Some('\u{014F}'),
+            b'U' => return Some('\u{016C}'),
+            b'u' => return Some('\u{016D}'),
+            _ => return None,
+        },
+        // Dot above
+        b'.' => match c1 {
+            b'B' => return Some('\u{1E02}'),
+            b'b' => return Some('\u{1E03}'),
+            b'C' => return Some('\u{010A}'),
+            b'c' => return Some('\u{010B}'),
+            b'D' => return Some('\u{1E0A}'),
+            b'd' => return Some('\u{1E0B}'),
+            b'E' => return Some('\u{0116}'),
+            b'e' => return Some('\u{0117}'),
+            b'F' => return Some('\u{1E1E}'),
+            b'f' => return Some('\u{1E1F}'),
+            b'G' => return Some('\u{0120}'),
+            b'g' => return Some('\u{0121}'),
+            b'H' => return Some('\u{1E22}'),
+            b'h' => return Some('\u{1E23}'),
+            b'I' => return Some('\u{0130}'),
+            b'M' => return Some('\u{1E40}'),
+            b'm' => return Some('\u{1E41}'),
+            b'N' => return Some('\u{1E44}'),
+            b'n' => return Some('\u{1E45}'),
+            b'P' => return Some('\u{1E56}'),
+            b'p' => return Some('\u{1E57}'),
+            b'R' => return Some('\u{1E58}'),
+            b'r' => return Some('\u{1E59}'),
+            b'S' => return Some('\u{1E60}'),
+            b's' => return Some('\u{1E61}'),
+            b'T' => return Some('\u{1E6A}'),
+            b't' => return Some('\u{1E6B}'),
+            b'W' => return Some('\u{1E86}'),
+            b'w' => return Some('\u{1E87}'),
+            b'X' => return Some('\u{1E8A}'),
+            b'x' => return Some('\u{1E8B}'),
+            b'Y' => return Some('\u{1E8E}'),
+            b'y' => return Some('\u{1E8F}'),
+            b'Z' => return Some('\u{017B}'),
+            b'z' => return Some('\u{017C}'),
+            _ => return None,
+        },
+        // Ring above
+        b'*' | b'0' => match c1 {
+            b'A' => return Some('\u{00C5}'),
+            b'a' => return Some('\u{00E5}'),
+            b'U' => return Some('\u{016E}'),
+            b'u' => return Some('\u{016F}'),
+            b'w' => return Some('\u{1E98}'),
+            b'y' => return Some('\u{1E99}'),
+            _ => return None,
+        },
+        // Caron (hacek)
+        b'<' => match c1 {
+            b'C' => return Some('\u{010C}'),
+            b'c' => return Some('\u{010D}'),
+            b'D' => return Some('\u{010E}'),
+            b'd' => return Some('\u{010F}'),
+            b'E' => return Some('\u{011A}'),
+            b'e' => return Some('\u{011B}'),
+            b'N' => return Some('\u{0147}'),
+            b'n' => return Some('\u{0148}'),
+            b'R' => return Some('\u{0158}'),
+            b'r' => return Some('\u{0159}'),
+            b'S' => return Some('\u{0160}'),
+            b's' => return Some('\u{0161}'),
+            b'T' => return Some('\u{0164}'),
+            b't' => return Some('\u{0165}'),
+            b'Z' => return Some('\u{017D}'),
+            b'z' => return Some('\u{017E}'),
+            _ => return None,
+        },
+        // Stroke / Slash
+        b'/' => match c1 {
+            b'D' => return Some('\u{0110}'),
+            b'd' => return Some('\u{0111}'),
+            b'H' => return Some('\u{0126}'),
+            b'h' => return Some('\u{0127}'),
+            b'L' => return Some('\u{0141}'),
+            b'l' => return Some('\u{0142}'),
+            b'O' => return Some('\u{00D8}'),
+            b'o' => return Some('\u{00F8}'),
+            b'T' => return Some('\u{0166}'),
+            b't' => return Some('\u{0167}'),
+            _ => return None,
+        },
+        // Ogonek (cedilla-like hook)
+        b';' => match c1 {
+            b'A' => return Some('\u{0104}'),
+            b'a' => return Some('\u{0105}'),
+            b'E' => return Some('\u{0118}'),
+            b'e' => return Some('\u{0119}'),
+            b'I' => return Some('\u{012E}'),
+            b'i' => return Some('\u{012F}'),
+            b'U' => return Some('\u{0172}'),
+            b'u' => return Some('\u{0173}'),
+            _ => return None,
+        },
+        // Double-acute (Hungarian)
+        b'=' => match c1 {
+            b'O' => return Some('\u{0150}'),
+            b'o' => return Some('\u{0151}'),
+            b'U' => return Some('\u{0170}'),
+            b'u' => return Some('\u{0171}'),
+            _ => return None,
+        },
+        // Hook / Horn (Vietnamese)
+        b'?' => match c1 {
+            b'N' => return Some('\u{00D1}'),
+            b'n' => return Some('\u{00F1}'), // fallback: tilde
+            b'O' => return Some('\u{01A0}'),
+            b'o' => return Some('\u{01A1}'),
+            b'U' => return Some('\u{01AF}'),
+            b'u' => return Some('\u{01B0}'),
+            _ => return None,
+        },
+        // Currency and special symbols
+        b'C' => match c1 {
+            b'=' => return Some('\u{20AC}'), // Euro
+            b'/' => return Some('\u{20A1}'), // Colon
+            b'R' => return Some('\u{20A2}'), // Cruzeiro
+            b'o' => return Some('\u{00A9}'), // Copyright
+            b'O' => return Some('\u{00A9}'),
+            _ => return None,
+        },
+        b'L' => match c1 {
+            b'=' => return Some('\u{00A3}'), // Pound
+            b'-' => return Some('\u{00A3}'),
+            _ => return None,
+        },
+        b'Y' => match c1 {
+            b'=' => return Some('\u{00A5}'), // Yen
+            b'-' => return Some('\u{00A5}'),
+            _ => return None,
+        },
+        b'S' => match c1 {
+            b'$' => return Some('\u{00A7}'), // Section sign
+            b'o' => return Some('\u{00A7}'),
+            b'0' => return Some('\u{00A7}'),
+            b'S' => return Some('\u{00A7}'),
+            b'O' => return Some('\u{00A7}'),
+            _ => return None,
+        },
+        b'P' => match c1 {
+            b'!' => return Some('\u{00B6}'), // Pilcrow
+            b'p' => return Some('\u{00B6}'),
+            _ => return None,
+        },
+        _ => {}
     }
-    // Tilde (N/n-specific)
-    if c2 == b'?' && (c1 == b'N' || c1 == b'n') {
-        return Some(if c1 == b'N' { '\u{00D1}' } else { '\u{00F1}' });
+    // Second match ordering for some digraphs where c1/c2 are swapped
+    match c1 {
+        b's' if c2 == b's' => return Some('\u{00DF}'), // German sharp s
+        b'S' if c2 == b'S' => return Some('\u{1E9E}'), // Capital sharp s
+        b'A' if c2 == b'E' => return Some('\u{00C6}'), // AE ligature
+        b'a' if c2 == b'e' => return Some('\u{00E6}'),
+        b'O' if c2 == b'E' => return Some('\u{0152}'), // OE ligature
+        b'o' if c2 == b'e' => return Some('\u{0153}'),
+        b'D' if c2 == b'z' => return Some('\u{01F1}'),
+        b'd' if c2 == b'z' => return Some('\u{01F3}'),
+        b'L' if c2 == b'J' => return Some('\u{01C7}'),
+        b'l' if c2 == b'j' => return Some('\u{01C9}'),
+        b'N' if c2 == b'J' => return Some('\u{01CA}'),
+        b'n' if c2 == b'j' => return Some('\u{01CC}'),
+        b'T' if c2 == b'H' => return Some('\u{00DE}'), // Thorn
+        b't' if c2 == b'h' => return Some('\u{00FE}'),
+        b'D' if c2 == b'H' => return Some('\u{00D0}'), // Eth
+        b'd' if c2 == b'h' => return Some('\u{00F0}'),
+        b'c' if c2 == b'o' => return Some('\u{00A9}'),
+        b'r' if c2 == b'o' => return Some('\u{00AE}'), // Registered
+        b'R' if c2 == b'o' => return Some('\u{00AE}'),
+        b'<' if c2 == b'<' => return Some('\u{00AB}'), // Guillemot left
+        b'>' if c2 == b'>' => return Some('\u{00BB}'), // Guillemot right
+        b'+' if c2 == b'-' => return Some('\u{00B1}'), // Plus-minus
+        b'x' if c2 == b'x' => return Some('\u{00D7}'), // Multiplication
+        b'-' if c2 == b':' => return Some('\u{00F7}'), // Division
+        b'1' if c2 == b'2' => return Some('\u{00BD}'), // Half
+        b'1' if c2 == b'4' => return Some('\u{00BC}'), // Quarter
+        b'3' if c2 == b'4' => return Some('\u{00BE}'), // Three-quarters
+        b'm' if c2 == b'u' => return Some('\u{00B5}'), // Micro
+        b'D' if c2 == b'E' => return Some('\u{00B0}'), // Degree
+        b'd' if c2 == b'e' => return Some('\u{00B0}'),
+        b'^' if c2 == b'1' => return Some('\u{00B9}'), // Superscript 1
+        b'^' if c2 == b'2' => return Some('\u{00B2}'),
+        b'^' if c2 == b'3' => return Some('\u{00B3}'),
+        b'p' if c2 == b'p' => return Some('\u{00B6}'), // Pilcrow lowercase
+        _ => {}
     }
     None
 }
