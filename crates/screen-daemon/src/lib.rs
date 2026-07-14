@@ -1548,9 +1548,24 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         }
                     }
 
-                    // Bell detection: use the terminal engine's flag
+                    // Bell detection: handle visual/audible bell
                     if window.terminal.take_bell() {
-                        broadcast(&mut clients, &Message::Bell(b"bell".to_vec()))?;
+                        if session.vbell {
+                            // Flash reverse video for visual bell
+                            for client in clients.iter_mut() {
+                                let _ = client.stream.write_all(b"\x1b[?5h");
+                                let _ = client.stream.flush();
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(150));
+                            for client in clients.iter_mut() {
+                                let _ = client.stream.write_all(b"\x1b[?5l");
+                                let _ = client.stream.flush();
+                            }
+                        } else {
+                            // Audible: send bell message
+                            let msg = session.bell_msg.clone().unwrap_or_else(|| b"bell".to_vec());
+                            broadcast(&mut clients, &Message::Bell(msg))?;
+                        }
                     }
 
                     // Silence monitoring: check for windows with silence timeout
