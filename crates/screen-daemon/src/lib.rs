@@ -402,6 +402,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     }
     session.default_group = config.group.clone().map(|g| g.as_encoded_bytes().to_vec());
     session.layoutdir = config.layoutdir.as_ref().map(PathBuf::from);
+    session.bindkeys = config.bindkeys.clone();
     if let Some(v) = config.vbell {
         session.vbell = v;
     }
@@ -1822,6 +1823,10 @@ struct SessionState {
     /// Cached output from backtick commands: id -> (output, last_run).
     backtick_outputs:
         std::cell::RefCell<std::collections::HashMap<u8, (Vec<u8>, std::time::SystemTime)>>,
+    /// Key bindings from bindkey config lines.
+    pub bindkeys: Vec<(u8, Vec<Vec<u8>>)>,
+    /// Runtime bindings from 'bind' command: key_byte -> command_words.
+    pub key_bindings: Option<std::collections::HashMap<u8, Vec<Vec<u8>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1957,6 +1962,8 @@ impl SessionState {
             saved_layouts: std::collections::HashMap::new(),
             window_groups: std::collections::HashMap::new(),
             backtick_outputs: std::cell::RefCell::new(std::collections::HashMap::new()),
+            bindkeys: Vec::new(),
+            key_bindings: None,
         }
     }
 
@@ -3908,6 +3915,21 @@ fn execute_command_string(
         "log" => {
             let enable = parts.next().is_none_or(|a| a != "off");
             session.logging = enable;
+            // Default log file: screenlog.N for current window
+            if enable
+                && session.log_file.is_none()
+                && let Some(win) = session.windows.get(session.selected)
+            {
+                session.log_file = Some(std::path::PathBuf::from(format!(
+                    "screenlog.{}",
+                    win.number
+                )));
+            }
+        }
+        "logfile" => {
+            if let Some(path) = parts.next() {
+                session.log_file = Some(std::path::PathBuf::from(path));
+            }
         }
         "flow" => {
             let enable = parts.next().is_none_or(|a| a != "off");
@@ -4681,11 +4703,13 @@ WALL: {}
         }
         "bind" => {
             // bind [key] [command ...]
-            // Stub: add to session's runtime bindings list
             if let Some(key) = parts.next() {
                 let cmd_parts: Vec<Vec<u8>> = parts.map(|s| s.as_bytes().to_vec()).collect();
                 if !key.is_empty() && !cmd_parts.is_empty() {
-                    // Store for future use (requires protocol-level rebinding)
+                    let key_byte = key.as_bytes().first().copied().unwrap_or(0);
+                    let mut kbmap = session.key_bindings.clone().unwrap_or_default();
+                    kbmap.insert(key_byte, cmd_parts.clone());
+                    session.key_bindings = Some(kbmap);
                 }
             }
         }
@@ -4694,7 +4718,8 @@ WALL: {}
             if let Some(key) = parts.next() {
                 let cmd_parts: Vec<Vec<u8>> = parts.map(|s| s.as_bytes().to_vec()).collect();
                 if !key.is_empty() && !cmd_parts.is_empty() {
-                    // Store for future use
+                    let key_byte = key.as_bytes().first().copied().unwrap_or(0);
+                    session.bindkeys.push((key_byte, cmd_parts));
                 }
             }
         }
