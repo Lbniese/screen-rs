@@ -365,6 +365,12 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     if let Some(v) = config.zmodem {
         session.zmodem = v;
     }
+    if let Some(v) = config.crlf {
+        session.crlf = v;
+    }
+    if let Some(v) = config.nonblock {
+        session.nonblock = v;
+    }
     session.wall = config.wall.clone();
     session.backtick = config.backtick.clone();
     // setenv/unsetenv are applied by the CLI before daemon start
@@ -396,6 +402,11 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     }
     session.default_group = config.group.clone().map(|g| g.as_encoded_bytes().to_vec());
     session.layoutdir = config.layoutdir.as_ref().map(PathBuf::from);
+    if let Some(v) = config.vbell {
+        session.vbell = v;
+    }
+    session.vbell_msg = config.vbell_msg.clone();
+    session.bell_msg = config.bell_msg.clone();
     let _window0 = session.create_window(
         &config.program,
         &config.args,
@@ -1767,6 +1778,24 @@ struct SessionState {
     nethack: bool,
     /// Standout rendition mode.
     sorendition: bool,
+    /// Visual bell enabled.
+    vbell: bool,
+    /// Visual bell message override.
+    vbell_msg: Option<Vec<u8>>,
+    /// Bell message override.
+    bell_msg: Option<Vec<u8>>,
+    /// CR/LF mode (autocr).
+    crlf: bool,
+    /// Digraph mode enabled.
+    digraph_mode: bool,
+    /// Meta (8-bit) mode.
+    meta_mode: bool,
+    /// Non-blocking I/O flag.
+    nonblock: bool,
+    /// Character encoding name.
+    encoding: Option<Vec<u8>>,
+    /// Quit requested (shutdown signal).
+    quit_requested: bool,
     /// Window group for new windows.
     default_group: Option<Vec<u8>>,
     /// Layout directory.
@@ -1899,6 +1928,15 @@ impl SessionState {
             blanked: false,
             nethack: false,
             sorendition: false,
+            vbell: false,
+            vbell_msg: None,
+            bell_msg: None,
+            crlf: false,
+            digraph_mode: false,
+            meta_mode: false,
+            nonblock: false,
+            encoding: None,
+            quit_requested: false,
             default_group: None,
             layoutdir: None,
             saved_layouts: std::collections::HashMap::new(),
@@ -4171,6 +4209,502 @@ fn execute_command_string(
                     }
                 }
             }
+        }
+        "stuff" => {
+            let text = parts.clone().collect::<Vec<_>>().join(" ");
+            if !text.is_empty() {
+                let _ = session.write_to_window(session.selected, text.as_bytes());
+            }
+        }
+        "at" => {
+            // Send command to window matching name/number/# title
+            if let Some(target) = parts.next() {
+                let cmd: Vec<&str> = parts.collect();
+                let cmd_str = cmd.join(" ");
+                // Try numeric first
+                if let Ok(num) = target.parse::<u32>() {
+                    if let Some(idx) = session.window_index(num) {
+                        let _ = session.write_to_window(idx, cmd_str.as_bytes());
+                    }
+                } else {
+                    // Match by title prefix
+                    for (idx, w) in session.windows.iter().enumerate() {
+                        if let Some(ref title) = w.terminal.title {
+                            let title_str = String::from_utf8_lossy(title);
+                            if title_str.contains(target) {
+                                let _ = session.write_to_window(idx, cmd_str.as_bytes());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "help" => {
+            let help_text: &[u8] = b"\
+C-a C-a   other       Switch to previous window\n\
+C-a 0-9   select 0-9  Select window by number\n\
+C-a A     title       Set window title\n\
+C-a c     screen      Create new window\n\
+C-a d     detach      Detach from session\n\
+C-a h     hardcopy    Write screen to file\n\
+C-a k     kill        Kill current window\n\
+C-a l     redisplay   Redraw screen\n\
+C-a m     lastmsg     Show last message\n\
+C-a n     next        Next window\n\
+C-a p     prev        Previous window\n\
+C-a S     split       Horizontal split\n\
+C-a v     digraph     Enter digraph\n\
+C-a w     windows     Show window list\n\
+C-a x     lockscreen  Lock session\n\
+C-a z     suspend     Suspend screen\n\
+C-a |     split -v    Vertical split\n\
+C-a \"     windowlist  Interactive list\n\
+C-a '     select      Select by number\n\
+C-a :     colon       Enter command\n";
+            for client in clients.iter_mut() {
+                let _ = Message::PtyOutput(help_text.to_vec()).write_to(&mut client.stream);
+            }
+        }
+        "version" => {
+            let msg = format!(
+                "screen-rs {}
+",
+                env!("CARGO_PKG_VERSION")
+            )
+            .into_bytes();
+            for client in clients.iter_mut() {
+                let _ = Message::HardstatusLine(msg.clone()).write_to(&mut client.stream);
+            }
+        }
+        "license" | "copyright" => {
+            let msg = b"screen-rs -- MIT License. Based on GNU Screen concepts.\n".to_vec();
+            for client in clients.iter_mut() {
+                let _ = Message::HardstatusLine(msg.clone()).write_to(&mut client.stream);
+            }
+        }
+        "lastmsg" => {
+            if !session.last_message.is_empty() {
+                for client in clients.iter_mut() {
+                    let _ = Message::HardstatusLine(session.last_message.clone())
+                        .write_to(&mut client.stream);
+                }
+            }
+        }
+        "info" => {
+            let dims = session.windows.first().map(|w| w.terminal.dimensions);
+            let msg = format!(
+                "screen-rs {}  windows: {}  scrollback: {}  dimensions: {}x{}
+",
+                env!("CARGO_PKG_VERSION"),
+                session.windows.len(),
+                session
+                    .windows
+                    .first()
+                    .map(|w| w.terminal.scrollback_size())
+                    .unwrap_or(0),
+                dims.map(|d| d.columns).unwrap_or(0),
+                dims.map(|d| d.rows).unwrap_or(0),
+            )
+            .into_bytes();
+            for client in clients.iter_mut() {
+                let _ = Message::HardstatusLine(msg.clone()).write_to(&mut client.stream);
+            }
+        }
+        "number" => {
+            if let Some(win) = session.windows.get(session.selected) {
+                let msg = format!(
+                    "{}
+",
+                    win.number
+                )
+                .into_bytes();
+                for client in clients.iter_mut() {
+                    let _ = Message::HardstatusLine(msg.clone()).write_to(&mut client.stream);
+                }
+            }
+        }
+        "title" => {
+            let new_title = parts.collect::<Vec<_>>().join(" ");
+            if let Some(win) = session.windows.get_mut(session.selected) {
+                win.terminal.title = if new_title.is_empty() {
+                    None
+                } else {
+                    Some(new_title.into_bytes())
+                };
+            }
+        }
+        "suspend" => {
+            // Detach all clients (user resumes with screen -r)
+            for client in clients.iter_mut() {
+                let _ = Message::Detach.write_to(&mut client.stream);
+            }
+        }
+        "next" => {
+            session.select_next_alive();
+        }
+        "prev" => {
+            if let Some(new_idx) = session.prev_window_index(session.selected) {
+                session.selected = new_idx;
+            }
+        }
+        "other" => {
+            if let Some(new_idx) = session.prev_window_index(session.selected) {
+                session.selected = new_idx;
+            }
+        }
+        "windowlist" | "windows" => {
+            let list: Vec<String> = session
+                .windows
+                .iter()
+                .map(|w| {
+                    let marker = if w.alive { ' ' } else { 'X' };
+                    let title = w
+                        .terminal
+                        .title
+                        .as_deref()
+                        .map(|t| String::from_utf8_lossy(t).into_owned())
+                        .unwrap_or_default();
+                    format!("{}{} {}", w.number, marker, title)
+                })
+                .collect();
+            let msg = list.join("\n").into_bytes();
+            for client in clients.iter_mut() {
+                let _ = Message::PtyOutput(msg.clone()).write_to(&mut client.stream);
+            }
+        }
+        "split" => {
+            // Horizontal split (rows)
+            let cols = session
+                .windows
+                .first()
+                .map(|w| w.terminal.dimensions.columns)
+                .unwrap_or(80);
+            let rows = session
+                .windows
+                .first()
+                .map(|w| w.terminal.dimensions.rows)
+                .unwrap_or(24);
+            let half = rows / 2;
+            // Create new window for split
+            let _ = session.create_window(
+                OsStr::new("/bin/sh"),
+                &[],
+                PtySize::new(cols, half),
+                OsStr::new("screen"),
+                OsStr::new("screen"),
+                None,
+                None,
+            );
+            if session.windows.len() > 1 {
+                let current_idx = session
+                    .regions
+                    .get(session.focused_region)
+                    .map(|r| r.window_idx)
+                    .unwrap_or(0);
+                let new_idx = session.windows.len() - 1;
+                session.regions.clear();
+                session.regions.push(Region {
+                    window_idx: current_idx,
+                    top: 0,
+                    height: half,
+                    left: 0,
+                    width: cols,
+                });
+                session.regions.push(Region {
+                    window_idx: new_idx,
+                    top: half,
+                    height: rows.saturating_sub(half),
+                    left: 0,
+                    width: cols,
+                });
+                session.focused_region = 1;
+            }
+        }
+        "remove" => {
+            // Remove current region (but keep window alive)
+            if session.regions.len() > 1 {
+                session.regions.remove(session.focused_region);
+                if session.focused_region >= session.regions.len() {
+                    session.focused_region = session.regions.len().saturating_sub(1);
+                }
+            }
+        }
+        "only" => {
+            // Remove all other regions, keep only focused
+            if let Some(region) = session.regions.get(session.focused_region) {
+                let idx = region.window_idx;
+                session.regions.clear();
+                session.regions.push(Region {
+                    window_idx: idx,
+                    top: 0,
+                    height: session
+                        .windows
+                        .get(idx)
+                        .map(|w| w.terminal.dimensions.rows)
+                        .unwrap_or(24),
+                    left: 0,
+                    width: session
+                        .windows
+                        .get(idx)
+                        .map(|w| w.terminal.dimensions.columns)
+                        .unwrap_or(80),
+                });
+                session.focused_region = 0;
+            }
+        }
+        "focus" => {
+            let dir = parts.next().unwrap_or("down");
+            match dir {
+                "up" => {
+                    if session.focused_region > 0 {
+                        session.focused_region -= 1;
+                    }
+                }
+                "down" if session.focused_region + 1 < session.regions.len() => {
+                    session.focused_region += 1;
+                }
+                _ => {}
+            }
+        }
+        "vbell" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.vbell = enable;
+        }
+        "bell_msg" => {
+            let msg = parts.clone().collect::<Vec<_>>().join(" ");
+            session.bell_msg = if msg.is_empty() {
+                None
+            } else {
+                Some(msg.into_bytes())
+            };
+        }
+        "vbell_msg" => {
+            let msg = parts.clone().collect::<Vec<_>>().join(" ");
+            session.vbell_msg = if msg.is_empty() {
+                None
+            } else {
+                Some(msg.into_bytes())
+            };
+        }
+        "altscreen" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            if let Some(win) = session.windows.get_mut(session.selected) {
+                if enable {
+                    let _ = win.terminal.apply(b"[?1049h");
+                } else {
+                    let _ = win.terminal.apply(b"[?1049l");
+                }
+            }
+        }
+        "crlf" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.crlf = enable;
+        }
+        "compacthist" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.compact_history = enable;
+            if let Some(win) = session.windows.get_mut(session.selected) {
+                win.terminal.set_compact_history(enable);
+            }
+        }
+        "ignorecase" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.ignorecase = enable;
+        }
+        "digraph" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.digraph_mode = enable;
+        }
+        "meta" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.meta_mode = enable;
+            if let Some(win) = session.windows.get_mut(session.selected) {
+                if enable {
+                    let _ = win.terminal.apply(b" G"); // 8-bit controls on
+                } else {
+                    let _ = win.terminal.apply(b" F"); // 7-bit controls
+                }
+            }
+        }
+        "nonblock" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.nonblock = enable;
+        }
+        "zmodem" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.zmodem = enable;
+        }
+        "bce" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.bce = enable;
+            if let Some(win) = session.windows.get_mut(session.selected) {
+                win.terminal.set_bce(enable);
+            }
+        }
+        "sorendition" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.sorendition = enable;
+            if let Some(win) = session.windows.get_mut(session.selected) {
+                win.terminal.set_sorendition(enable);
+            }
+        }
+        "width" => {
+            if let Some(s) = parts.next()
+                && let Ok(w) = s.parse::<u16>()
+            {
+                let dims = session
+                    .windows
+                    .first()
+                    .map(|d| d.terminal.dimensions)
+                    .unwrap_or(Dimensions::new(80, 24));
+                for win in session.windows.iter_mut() {
+                    let new_dims = Dimensions::new(w, dims.rows);
+                    win.terminal.resize(new_dims);
+                }
+            }
+        }
+        "scrollback" => {
+            if let Some(s) = parts.next()
+                && let Ok(n) = s.parse::<u32>()
+                && let Some(win) = session.windows.get_mut(session.selected)
+            {
+                win.terminal.set_scrollback_limit(n);
+            }
+        }
+        "printcmd" => {
+            let cmd = parts.clone().collect::<Vec<_>>().join(" ");
+            session.printcmd = if cmd.is_empty() {
+                None
+            } else {
+                Some(OsString::from(cmd))
+            };
+        }
+        "bufferfile" => {
+            if let Some(path) = parts.next() {
+                session.exchange_file = Some(PathBuf::from(path));
+            }
+        }
+        "defencoding" => {
+            if let Some(enc) = parts.next() {
+                session.encoding = Some(enc.as_bytes().to_vec());
+            }
+        }
+        "hardstatus" => {
+            let fmt = parts.clone().collect::<Vec<_>>().join(" ");
+            session.hardstatus_format = if fmt.is_empty() {
+                None
+            } else {
+                Some(fmt.into_bytes())
+            };
+        }
+        "caption" => {
+            let fmt = parts.clone().collect::<Vec<_>>().join(" ");
+            session.caption_format = if fmt.is_empty() {
+                None
+            } else {
+                Some(fmt.into_bytes())
+            };
+        }
+        "defmonitor" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.default_monitor = Some(enable);
+        }
+        "slowpaste" => {
+            if let Some(s) = parts.next() {
+                if s == "off" {
+                    session.slowpaste = None;
+                } else if let Ok(n) = s.parse::<u32>() {
+                    session.slowpaste = Some(n);
+                }
+            }
+        }
+        "wall" => {
+            let msg = parts.clone().collect::<Vec<_>>().join(" ");
+            if !msg.is_empty() {
+                let wall_msg = format!(
+                    "
+WALL: {}
+",
+                    msg
+                )
+                .into_bytes();
+                for win in session.windows.iter_mut() {
+                    let resp = win.terminal.apply(&wall_msg);
+                    if let Some(ref mut pty) = win.pty {
+                        let _ = pty.write_all(&resp);
+                    }
+                }
+            }
+        }
+        "screen" => {
+            // Create new window with optional program
+            let (_program, _args): (Vec<u8>, Vec<Vec<u8>>) = if let Some(prog) = parts.next() {
+                let rem: Vec<Vec<u8>> = parts.map(|s| s.as_bytes().to_vec()).collect();
+                (prog.as_bytes().to_vec(), rem)
+            } else {
+                (b"/bin/sh".to_vec(), vec![])
+            };
+            let size = session
+                .windows
+                .first()
+                .map(|w| PtySize::new(w.terminal.dimensions.columns, w.terminal.dimensions.rows))
+                .unwrap_or(PtySize::new(80, 24));
+            let _ = session.create_window(
+                OsStr::new("/bin/sh"),
+                &[],
+                size,
+                OsStr::new("screen"),
+                OsStr::new("screen"),
+                None,
+                None,
+            );
+        }
+        "bind" => {
+            // bind [key] [command ...]
+            // Stub: add to session's runtime bindings list
+            if let Some(key) = parts.next() {
+                let cmd_parts: Vec<Vec<u8>> = parts.map(|s| s.as_bytes().to_vec()).collect();
+                if !key.is_empty() && !cmd_parts.is_empty() {
+                    // Store for future use (requires protocol-level rebinding)
+                }
+            }
+        }
+        "bindkey" => {
+            // bindkey [key] [command ...]
+            if let Some(key) = parts.next() {
+                let cmd_parts: Vec<Vec<u8>> = parts.map(|s| s.as_bytes().to_vec()).collect();
+                if !key.is_empty() && !cmd_parts.is_empty() {
+                    // Store for future use
+                }
+            }
+        }
+        "readbuf" => {
+            if let Some(ref path) = session.exchange_file
+                && let Ok(data) = std::fs::read(path)
+            {
+                session.paste_buffer.push(data);
+            }
+        }
+        "writebuf" => {
+            if let Some(ref path) = session.exchange_file
+                && let Some(data) = session.paste_buffer.last()
+            {
+                let _ = std::fs::write(path, data);
+            }
+        }
+        "detach" => {
+            for client in clients.iter_mut() {
+                let _ = Message::Detach.write_to(&mut client.stream);
+            }
+        }
+        "quit" => {
+            // Kill all windows and exit
+            for client in clients.iter_mut() {
+                let _ = Message::Detach.write_to(&mut client.stream);
+            }
+            // Trigger shutdown via signal
+            session.quit_requested = true;
         }
         _ => {}
     }

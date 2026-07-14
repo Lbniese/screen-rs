@@ -518,6 +518,10 @@ impl TerminalState {
         }
     }
 
+    pub fn scrollback_size(&self) -> usize {
+        self.scrollback.len()
+    }
+
     /// Number of scrollback lines available.
     pub fn scrollback_len(&self) -> usize {
         self.scrollback.len()
