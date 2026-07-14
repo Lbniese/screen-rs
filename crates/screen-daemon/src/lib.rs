@@ -219,6 +219,8 @@ pub struct PtySessionConfig {
     pub nonblock: Option<bool>,
     /// Zmodem catch.
     pub zmodem: Option<bool>,
+    /// Mouse tracking enabled.
+    pub mousetrack: Option<bool>,
     /// Wall message.
     pub wall: Option<Vec<u8>>,
     /// Backtick commands.
@@ -297,6 +299,7 @@ impl PtySessionConfig {
             hardcopy_append: None,
             nonblock: None,
             zmodem: None,
+            mousetrack: None,
             wall: None,
             backtick: Vec::new(),
             setenv: Vec::new(),
@@ -364,6 +367,9 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     }
     if let Some(v) = config.zmodem {
         session.zmodem = v;
+    }
+    if let Some(v) = config.mousetrack {
+        session.mousetrack = v;
     }
     if let Some(v) = config.crlf {
         session.crlf = v;
@@ -1756,6 +1762,8 @@ struct SessionState {
     hardcopy_append: bool,
     /// Zmodem catch.
     zmodem: bool,
+    /// Mouse tracking enabled.
+    mousetrack: bool,
     /// Wall message.
     wall: Option<Vec<u8>>,
     /// Backtick commands to run.
@@ -1929,6 +1937,7 @@ impl SessionState {
             printcmd: None,
             hardcopy_append: false,
             zmodem: false,
+            mousetrack: false,
             wall: None,
             backtick: Vec::new(),
             msgwait: 5,

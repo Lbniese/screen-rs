@@ -89,6 +89,8 @@ pub struct ScreenConfig {
     pub nonblock: Option<bool>,
     /// Zmodem catch support.
     pub zmodem: Option<bool>,
+    /// Mouse tracking mode.
+    pub mousetrack: Option<bool>,
     /// Wall message broadcast.
     pub wall: Option<Vec<u8>>,
     /// Bootstrap backtick commands.
@@ -654,7 +656,10 @@ fn execute_command(
             // Default flow control — accepted
         }
         b"mousetrack" => {
-            // Accepted — mouse tracking mode
+            config.mousetrack = Some(true);
+        }
+        b"nomousetrack" => {
+            config.mousetrack = Some(false);
         }
         b"registration" => {
             // Accepted — registration message

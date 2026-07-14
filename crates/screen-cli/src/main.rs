@@ -700,6 +700,9 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
         if let Some(v) = screenrc.zmodem {
             config.zmodem = Some(v);
         }
+        if let Some(v) = screenrc.mousetrack {
+            config.mousetrack = Some(v);
+        }
         if let Some(v) = screenrc.wall {
             config.wall = Some(v);
         }
