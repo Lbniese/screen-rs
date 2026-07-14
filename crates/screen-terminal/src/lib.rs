@@ -680,6 +680,19 @@ impl TerminalState {
         }
     }
 
+    /// Dump the full screen grid as rows of cells for hardcopy.
+    pub fn dump_screen_rows(&self) -> Vec<Vec<Cell>> {
+        let g = self.grid();
+        let cols = usize::from(g.columns);
+        let mut rows = Vec::with_capacity(usize::from(g.rows));
+        for r in 0..usize::from(g.rows) {
+            let start = r * cols;
+            let end = start + cols;
+            rows.push(g.cells[start..end].to_vec());
+        }
+        rows
+    }
+
     fn grid_mut(&mut self) -> &mut Grid {
         if self.using_alternate {
             self.alternate.as_mut().unwrap_or(&mut self.primary)

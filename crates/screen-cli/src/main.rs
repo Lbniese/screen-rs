@@ -729,6 +729,27 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
         if let Some(v) = screenrc.multiuser {
             config.multiuser = Some(v);
         }
+        if let Some(v) = screenrc.idle {
+            config.idle = Some(v);
+        }
+        if let Some(v) = screenrc.blanker {
+            config.blanker = Some(OsString::from_vec(v));
+        }
+        if let Some(v) = screenrc.blankerprg {
+            config.blankerprg = Some(OsString::from_vec(v));
+        }
+        if let Some(v) = screenrc.nethack {
+            config.nethack = Some(v);
+        }
+        if let Some(v) = screenrc.sorendition {
+            config.sorendition = Some(v);
+        }
+        if let Some(v) = screenrc.group {
+            config.group = Some(OsString::from_vec(v));
+        }
+        if let Some(v) = screenrc.layoutdir {
+            config.layoutdir = Some(OsString::from_vec(v));
+        }
         config.acl = screenrc
             .acl
             .into_iter()

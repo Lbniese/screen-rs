@@ -101,6 +101,20 @@ pub struct ScreenConfig {
     pub multiuser: Option<bool>,
     /// ACL entries.
     pub acl: Vec<ConfigAclEntry>,
+    /// Idle timeout in seconds before blanking (0 = disabled).
+    pub idle: Option<u32>,
+    /// Blanker program (run when idling, instead of blank).
+    pub blanker: Option<Vec<u8>>,
+    /// Blanker program arguments.
+    pub blankerprg: Option<Vec<u8>>,
+    /// Nethack mode (disable auto-wrap).
+    pub nethack: Option<bool>,
+    /// Standout rendition mode.
+    pub sorendition: Option<bool>,
+    /// Window group name.
+    pub group: Option<Vec<u8>>,
+    /// Layout directory for save/restore.
+    pub layoutdir: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -628,9 +642,6 @@ fn execute_command(
                 }
             }
         }
-        b"nethack" => {
-            // Accepted — enables nethack mode
-        }
         b"zombie" => {
             if !args.is_empty() {
                 config.defzombie = Some(args.join(&b' '));
@@ -650,9 +661,6 @@ fn execute_command(
         }
         b"defmode" => {
             // Accepted — default terminal mode
-        }
-        b"sorendition" => {
-            // Accepted — standout rendition
         }
         b"pow_detach" => {
             // Accepted — auto-detach on power loss
@@ -677,6 +685,41 @@ fn execute_command(
         }
         b"multiuser" => {
             config.multiuser = Some(bool_arg(args, command, line)?);
+        }
+        b"idle" => {
+            let val = one_arg(args, command, line)?;
+            let text = std::str::from_utf8(val).map_err(|_| ConfigError {
+                line,
+                kind: ConfigErrorKind::InvalidArgument {
+                    command: String::from_utf8_lossy(command).into_owned(),
+                    value: String::from_utf8_lossy(val).into_owned(),
+                },
+            })?;
+            config.idle = Some(text.parse::<u32>().map_err(|_| ConfigError {
+                line,
+                kind: ConfigErrorKind::InvalidArgument {
+                    command: String::from_utf8_lossy(command).into_owned(),
+                    value: text.to_owned(),
+                },
+            })?);
+        }
+        b"blanker" => {
+            config.blanker = Some(one_arg(args, command, line)?.to_vec());
+        }
+        b"blankerprg" => {
+            config.blankerprg = Some(one_arg(args, command, line)?.to_vec());
+        }
+        b"nethack" => {
+            config.nethack = Some(bool_arg(args, command, line)?);
+        }
+        b"sorendition" => {
+            config.sorendition = Some(bool_arg(args, command, line)?);
+        }
+        b"group" => {
+            config.group = Some(one_arg(args, command, line)?.to_vec());
+        }
+        b"layoutdir" => {
+            config.layoutdir = Some(one_arg(args, command, line)?.to_vec());
         }
         b"acladd" => {
             if !args.is_empty() {

@@ -233,6 +233,20 @@ pub struct PtySessionConfig {
     pub acl: Vec<AclEntry>,
     /// Key bindings from bindkey config lines: (key_byte, command_words).
     pub bindkeys: Vec<(u8, Vec<Vec<u8>>)>,
+    /// Idle timeout in seconds (0 = disabled).
+    pub idle: Option<u32>,
+    /// Blanker program path.
+    pub blanker: Option<OsString>,
+    /// Blanker program arguments.
+    pub blankerprg: Option<OsString>,
+    /// Nethack mode.
+    pub nethack: Option<bool>,
+    /// Standout rendition mode.
+    pub sorendition: Option<bool>,
+    /// Default window group.
+    pub group: Option<OsString>,
+    /// Layout directory for save/restore.
+    pub layoutdir: Option<OsString>,
 }
 
 impl PtySessionConfig {
@@ -290,6 +304,13 @@ impl PtySessionConfig {
             multiuser: None,
             acl: Vec::new(),
             bindkeys: Vec::new(),
+            idle: None,
+            blanker: None,
+            blankerprg: None,
+            nethack: None,
+            sorendition: None,
+            group: None,
+            layoutdir: None,
         }
     }
 
@@ -364,6 +385,17 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
         session.multiuser = v;
     }
     session.acl.extend(config.acl.iter().cloned());
+    session.idle_timeout = config.idle.unwrap_or(0);
+    session.blanker = config.blanker.clone();
+    session.blankerprg = config.blankerprg.clone();
+    if let Some(v) = config.nethack {
+        session.nethack = v;
+    }
+    if let Some(v) = config.sorendition {
+        session.sorendition = v;
+    }
+    session.default_group = config.group.clone().map(|g| g.as_encoded_bytes().to_vec());
+    session.layoutdir = config.layoutdir.as_ref().map(PathBuf::from);
     let _window0 = session.create_window(
         &config.program,
         &config.args,
@@ -428,6 +460,20 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                 }
             }
             None => {}
+        }
+
+        // Idle blanking check
+        if session.idle_timeout > 0 && !session.blanked {
+            let elapsed = session.last_activity_global.elapsed().unwrap_or_default();
+            if elapsed.as_secs() >= session.idle_timeout as u64 {
+                session.blanked = true;
+                // Send blank screen sequence
+                for client in clients.iter_mut() {
+                    // CSI ? 5 h — reverse video on (common blanking)
+                    let _ = client.stream.write_all(b"[?5h");
+                    let _ = client.stream.flush();
+                }
+            }
         }
 
         // Accept new clients and handle one-shot commands
@@ -1446,6 +1492,11 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     }
                     window.last_activity = SystemTime::now();
                     window.activity_notified = true;
+                    session.last_activity_global = SystemTime::now();
+                    if session.blanked {
+                        session.blanked = false;
+                        // Unblank will be handled below by re-rendering
+                    }
 
                     // Broadcast title change to all clients
                     if window.terminal.title != old_title
@@ -1689,9 +1740,40 @@ struct SessionState {
     multiuser: bool,
     /// ACL entries for multi-user access.
     acl: Vec<AclEntry>,
+    /// Idle timeout in seconds (0 = disabled).
+    idle_timeout: u32,
+    /// Blanker program (empty = use terminal blank).
+    blanker: Option<OsString>,
+    /// Blanker program args.
+    blankerprg: Option<OsString>,
+    /// Last global activity timestamp (for idle blanking).
+    last_activity_global: std::time::SystemTime,
+    /// Whether the screen is currently blanked.
+    blanked: bool,
+    /// Nethack mode: disable DECAWM.
+    nethack: bool,
+    /// Standout rendition mode.
+    sorendition: bool,
+    /// Window group for new windows.
+    default_group: Option<Vec<u8>>,
+    /// Layout directory.
+    layoutdir: Option<PathBuf>,
+    /// Named saved layouts: name -> list of (window_number, region)
+    saved_layouts: std::collections::HashMap<Vec<u8>, Vec<SavedLayoutEntry>>,
+    /// Window groups: window_number -> group_name
+    window_groups: std::collections::HashMap<u32, Vec<u8>>,
     /// Cached output from backtick commands: id -> (output, last_run).
     backtick_outputs:
         std::cell::RefCell<std::collections::HashMap<u8, (Vec<u8>, std::time::SystemTime)>>,
+}
+
+#[derive(Debug, Clone)]
+struct SavedLayoutEntry {
+    window_number: u32,
+    top: u16,
+    height: u16,
+    left: u16,
+    width: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -1727,6 +1809,11 @@ struct ManagedWindow {
     wrap_enabled: bool,
     /// Activity flag: set when output received, cleared on window list broadcast.
     activity_notified: bool,
+    /// Window group name.
+    group: Option<Vec<u8>>,
+    /// Zmodem: whether we're in a zmodem transfer.
+    #[allow(dead_code)]
+    zmodem_active: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1792,6 +1879,17 @@ impl SessionState {
             markkeys: None,
             multiuser: false,
             acl: Vec::new(),
+            idle_timeout: 0,
+            blanker: None,
+            blankerprg: None,
+            last_activity_global: std::time::SystemTime::now(),
+            blanked: false,
+            nethack: false,
+            sorendition: false,
+            default_group: None,
+            layoutdir: None,
+            saved_layouts: std::collections::HashMap::new(),
+            window_groups: std::collections::HashMap::new(),
             backtick_outputs: std::cell::RefCell::new(std::collections::HashMap::new()),
         }
     }
@@ -1841,6 +1939,10 @@ impl SessionState {
         if self.compact_history {
             terminal.set_compact_history(true);
         }
+        if self.nethack {
+            // Disable auto-wrap for nethack mode
+            let _ = terminal.apply(b"[?7l");
+        }
 
         let window = ManagedWindow {
             id,
@@ -1855,6 +1957,8 @@ impl SessionState {
             last_activity: SystemTime::now(),
             wrap_enabled: self.default_wrap.unwrap_or(true),
             activity_notified: false,
+            group: self.default_group.clone(),
+            zmodem_active: false,
         };
 
         self.windows.push(window);
@@ -3795,6 +3899,136 @@ fn execute_command_string(
                 session.zombie_cmd = Some(args.join(" ").into_bytes());
             }
         }
+        "hardcopy" => {
+            if let Some(win) = session.windows.get(session.selected) {
+                let dump = win.terminal.dump_screen_rows();
+                let mut out = Vec::new();
+                for line in dump {
+                    let mut line_bytes = Vec::new();
+                    for cell in line {
+                        if cell.is_blank() {
+                            line_bytes.push(b' ');
+                        } else {
+                            line_bytes.extend_from_slice(&cell.bytes);
+                        }
+                    }
+                    // Trim trailing spaces
+                    while line_bytes.last() == Some(&b' ') {
+                        line_bytes.pop();
+                    }
+                    line_bytes.push(b'\n');
+                    out.extend_from_slice(&line_bytes);
+                }
+                if let Some(ref cmd) = session.printcmd {
+                    use std::process::{Command, Stdio};
+                    if let Ok(mut child) =
+                        Command::new(cmd.as_os_str()).stdin(Stdio::piped()).spawn()
+                    {
+                        use std::io::Write;
+                        if let Some(mut stdin) = child.stdin.take() {
+                            let _ = stdin.write_all(&out);
+                        }
+                        let _ = child.wait();
+                    }
+                } else {
+                    // Fallback: write to hardcopy.N file
+                    use std::fs;
+                    let path = std::env::current_dir().unwrap_or_default();
+                    let mut n = 0u32;
+                    loop {
+                        let name = format!("hardcopy.{}", n);
+                        let candidate = path.join(&name);
+                        if !candidate.exists() {
+                            let _ = fs::write(&candidate, &out);
+                            break;
+                        }
+                        n += 1;
+                    }
+                }
+            }
+        }
+        "layout" => {
+            let sub = parts.next().unwrap_or("help");
+            match sub {
+                "save" => {
+                    if let Some(name) = parts.next() {
+                        let layout_name = name.as_bytes().to_vec();
+                        let mut entries = Vec::new();
+                        for r in &session.regions {
+                            if let Some(win) = session.windows.get(r.window_idx) {
+                                entries.push(SavedLayoutEntry {
+                                    window_number: win.number,
+                                    top: r.top,
+                                    height: r.height,
+                                    left: r.left,
+                                    width: r.width,
+                                });
+                            }
+                        }
+                        if session.regions.is_empty() {
+                            // Save single-window layout
+                            if let Some(win) = session.windows.get(session.selected) {
+                                let dims = win.terminal.dimensions;
+                                entries.push(SavedLayoutEntry {
+                                    window_number: win.number,
+                                    top: 0,
+                                    height: dims.rows,
+                                    left: 0,
+                                    width: dims.columns,
+                                });
+                            }
+                        }
+                        session.saved_layouts.insert(layout_name, entries);
+                    }
+                }
+                "load" => {
+                    if let Some(name) = parts.next()
+                        && let Some(entries) = session.saved_layouts.get(name.as_bytes())
+                    {
+                        session.regions.clear();
+                        for entry in entries {
+                            // Find or create window with this number
+                            let window_idx = session
+                                .windows
+                                .iter()
+                                .position(|w| w.number == entry.window_number);
+                            if let Some(idx) = window_idx {
+                                session.regions.push(Region {
+                                    window_idx: idx,
+                                    top: entry.top,
+                                    height: entry.height,
+                                    left: entry.left,
+                                    width: entry.width,
+                                });
+                            }
+                        }
+                        if !session.regions.is_empty() {
+                            session.focused_region = 0;
+                        }
+                    }
+                }
+                "remove" => {
+                    if let Some(name) = parts.next() {
+                        session.saved_layouts.remove(name.as_bytes());
+                    }
+                }
+                "show" | "list" => {
+                    let mut names: Vec<&Vec<u8>> = session.saved_layouts.keys().collect();
+                    names.sort();
+                    let mut msg = b"Layouts: ".to_vec();
+                    for (i, n) in names.iter().enumerate() {
+                        if i > 0 {
+                            msg.extend_from_slice(b", ");
+                        }
+                        msg.extend_from_slice(n);
+                    }
+                    for client in clients.iter_mut() {
+                        let _ = Message::HardstatusLine(msg.clone()).write_to(&mut client.stream);
+                    }
+                }
+                _ => {}
+            }
+        }
         "setenv" => {
             if let Some(var) = parts.next() {
                 let val = parts.clone().collect::<Vec<_>>().join(" ");
@@ -3808,6 +4042,9 @@ fn execute_command_string(
                 session.runtime_unset.push(var.as_bytes().to_vec());
             }
         }
+        "nethack" => {
+            session.nethack = parts.next().is_none_or(|a| a != "off");
+        }
         "sessionname" => {
             if let Some(name) = parts.next() {
                 session.sessionname = Some(name.as_bytes().to_vec());
@@ -3816,6 +4053,34 @@ fn execute_command_string(
         "password" => {
             if let Some(pw) = parts.next() {
                 session.password = Some(pw.as_bytes().to_vec());
+            }
+        }
+        "group" => {
+            if let Some(name) = parts.next() {
+                let group_name = name.as_bytes().to_vec();
+                // Set current window's group
+                if let Some(win) = session.windows.get_mut(session.selected) {
+                    win.group = Some(group_name.clone());
+                    session.window_groups.insert(win.number, group_name);
+                }
+            }
+        }
+        "grouplist" | "groups" => {
+            let mut groups = std::collections::BTreeSet::new();
+            for w in &session.windows {
+                if let Some(ref g) = w.group {
+                    groups.insert(g.clone());
+                }
+            }
+            let mut msg = b"Groups: ".to_vec();
+            for (i, g) in groups.iter().enumerate() {
+                if i > 0 {
+                    msg.extend_from_slice(b", ");
+                }
+                msg.extend_from_slice(g);
+            }
+            for client in clients.iter_mut() {
+                let _ = Message::HardstatusLine(msg.clone()).write_to(&mut client.stream);
             }
         }
         "exec" => {
