@@ -3940,6 +3940,13 @@ fn execute_command_string(
                 session.log_file = Some(std::path::PathBuf::from(path));
             }
         }
+        "maxwin" => {
+            if let Some(n) = parts.next()
+                && let Ok(max) = n.parse::<u32>()
+            {
+                session.maxwin = Some(max);
+            }
+        }
         "flow" => {
             let enable = parts.next().is_none_or(|a| a != "off");
             session.flow_control = enable;
@@ -3985,13 +3992,6 @@ fn execute_command_string(
                 && let Ok(n) = s.parse::<u32>()
             {
                 session.msgminwait = n;
-            }
-        }
-        "maxwin" => {
-            if let Some(s) = parts.next()
-                && let Ok(n) = s.parse::<u32>()
-            {
-                session.maxwin = Some(n);
             }
         }
         "zombie" => {
