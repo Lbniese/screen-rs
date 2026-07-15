@@ -917,6 +917,12 @@ fn attach_socket(
     let paste_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let paste_clone = Arc::clone(&paste_buffer);
     // Build a fast lookup map from single-byte keys to commands
+    // Runtime bindings from daemon (updated via BindingsUpdate messages)
+    let runtime_bindings: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u8, Vec<u8>>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    // Clone for the stdin dispatch thread
+    let runtime_bindings_thread = runtime_bindings.clone();
+
     let binding_map: std::collections::HashMap<u8, Vec<Vec<u8>>> = bindings
         .into_iter()
         .filter_map(|(key, cmd)| {
@@ -942,6 +948,9 @@ fn attach_socket(
         let mut prefix = false;
         let mut digraph = 0u8; // 0=inactive, 1=first char pending, 2=second char pending
         let mut digraph_chars = [0u8; 2];
+        // Check runtime bindings from daemon (after config bindings)
+        let binding_map = binding_map;
+        let runtime_bindings = runtime_bindings_thread;
         loop {
             match stdin.read(&mut buffer) {
                 Ok(0) => {
@@ -980,9 +989,14 @@ fn attach_socket(
                         }
                         if prefix {
                             prefix = false;
-                            // Check custom bindings first
+                            // Check custom bindings first (config)
                             if let Some(cmd) = binding_map.get(byte) {
                                 dispatch_binding(cmd, &mut input_stream);
+                                continue;
+                            }
+                            // Check runtime bindings from daemon
+                            if let Some(cmd) = runtime_bindings.lock().unwrap().get(byte) {
+                                dispatch_binding(std::slice::from_ref(cmd), &mut input_stream);
                                 continue;
                             }
                             match *byte {
@@ -1329,10 +1343,6 @@ fn attach_socket(
     );
     let _ = stdout.write_all(banner.as_bytes());
     let _ = stdout.flush();
-
-    // Runtime bindings from daemon (updated via BindingsUpdate messages)
-    let runtime_bindings: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u8, Vec<u8>>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
     let (mut last_cols, mut last_rows) = terminal_size().unwrap_or((80, 24));
     loop {

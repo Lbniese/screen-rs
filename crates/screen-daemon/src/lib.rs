@@ -1,5 +1,3 @@
-#![deny(unsafe_code)]
-
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -13,6 +11,8 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 mod encoding;
+mod peer_cred;
+mod termcap;
 
 use screen_protocol::{Message, ProtocolError, WindowInfoMsg};
 use screen_pty::{PtyCommand, PtyError, PtyProcess, PtySize};
@@ -518,20 +518,46 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
             match event {
                 ClientEvent::Input(id, bytes) => {
                     // Try to handle as mouse event if mouse mode is enabled
+                    // or if mousetrack is on (always intercept mouse sequences)
                     let client_idx = clients.iter().position(|c| c.id == id);
-                    let client_mouse_mode = client_idx
-                        .and_then(|idx| session.windows.get(clients[idx].selected))
-                        .map(|w| w.terminal.mouse_mode())
-                        .unwrap_or(screen_terminal::MouseMode::Off);
-                    if client_mouse_mode != screen_terminal::MouseMode::Off {
+                    let (_selected_win, client_mouse_mode) = client_idx
+                        .and_then(|idx| {
+                            let sel = clients[idx].selected;
+                            session
+                                .windows
+                                .get(sel)
+                                .map(|w| (sel, w.terminal.mouse_mode()))
+                        })
+                        .unwrap_or((0, screen_terminal::MouseMode::Off));
+                    let track_mouse =
+                        client_mouse_mode != screen_terminal::MouseMode::Off || session.mousetrack;
+                    if track_mouse {
                         // Accumulate bytes and try to decode mouse events
                         let Some(idx) = client_idx else { continue };
                         clients[idx].mouse_buf.extend_from_slice(&bytes);
                         let selected = clients[idx].selected;
                         loop {
                             let buf_snapshot = clients[idx].mouse_buf.clone();
+                            // When mousetrack is on but app hasn't enabled mouse,
+                            // auto-detect the mouse protocol from the buffer.
+                            let detect_mode = if track_mouse
+                                && client_mouse_mode == screen_terminal::MouseMode::Off
+                            {
+                                if buf_snapshot.starts_with(b"\x1b[<") {
+                                    screen_terminal::MouseMode::Sgr
+                                } else if buf_snapshot.starts_with(b"\x1b[M") {
+                                    screen_terminal::MouseMode::Normal
+                                } else {
+                                    // Not a recognized mouse sequence
+                                    let flushed = std::mem::take(&mut clients[idx].mouse_buf);
+                                    session.write_to_window(selected, &flushed)?;
+                                    break;
+                                }
+                            } else {
+                                client_mouse_mode
+                            };
                             if let Some((event, consumed)) =
-                                try_decode_mouse(&buf_snapshot, client_mouse_mode)
+                                try_decode_mouse(&buf_snapshot, detect_mode)
                             {
                                 clients[idx].mouse_buf.drain(..consumed);
                                 // Handle mouse event (passing session, clients without holding a borrow on client)
@@ -2027,6 +2053,12 @@ impl SessionState {
         cmd.env("WINDOW", number.to_string().as_str());
         cmd.env("TERM", term);
 
+        // Build TERMCAP from base description + user overrides
+        let term_str = String::from_utf8_lossy(term.as_encoded_bytes());
+        let termcap =
+            termcap::build_termcap(&term_str, size.columns, size.rows, &self.termcap_overrides);
+        cmd.env("TERMCAP", String::from_utf8_lossy(&termcap).to_string());
+
         let pty = cmd.spawn()?;
         let mut terminal = TerminalState::new(Dimensions::new(size.columns, size.rows));
         if let Some(limit) = scrollback_limit {
@@ -2377,7 +2409,7 @@ impl SessionState {
 
     /// Check if a new attach is allowed in multi-user mode.
     /// Returns Some(permissions) if allowed, None if denied.
-    fn allow_attach(&self) -> Option<AclPermissions> {
+    fn allow_attach(&self, uid: u32) -> Option<AclPermissions> {
         if !self.multiuser {
             return Some(AclPermissions::default());
         }
@@ -2385,9 +2417,15 @@ impl SessionState {
         if self.acl.is_empty() {
             return None;
         }
-        // For now, allow any authenticated user with ACL entries present
-        // Full implementation would verify credentials against ACL entries
-        Some(self.acl.first()?.permissions)
+        // Resolve username from UID and match against ACL entries
+        let username = peer_cred::get_username_for_uid(uid);
+        for entry in &self.acl {
+            let entry_name = String::from_utf8_lossy(&entry.username);
+            if entry_name == username || entry_name == "*" {
+                return Some(entry.permissions);
+            }
+        }
+        None
     }
 }
 
@@ -3159,7 +3197,8 @@ fn accept_connections(
                     Ok(Message::Attach) => {
                         // ACL check for multi-user mode
                         if session.multiuser {
-                            let perms = session.allow_attach();
+                            let uid = peer_cred::get_peer_uid(&stream).unwrap_or(0);
+                            let perms = session.allow_attach(uid);
                             if perms.is_none() {
                                 write_protocol_error(
                                     &mut stream,

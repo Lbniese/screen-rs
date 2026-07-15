@@ -10,6 +10,7 @@ screen-core = { path = "../screen-core", version = "0.0.1" }
 screen-protocol = { path = "../screen-protocol", version = "0.0.1" }
 screen-pty = { path = "../screen-pty", version = "0.0.1" }
 screen-terminal = { path = "../screen-terminal", version = "0.0.1" }
+encoding_rs = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
