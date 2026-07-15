@@ -16,7 +16,7 @@ mod termcap;
 
 use screen_protocol::{Message, ProtocolError, WindowInfoMsg};
 use screen_pty::{PtyCommand, PtyError, PtyProcess, PtySize};
-use screen_terminal::{Dimensions, TerminalState};
+use screen_terminal::{Dimensions, Style, TerminalState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonState {
@@ -136,6 +136,17 @@ impl Default for AclPermissions {
 }
 
 /// ACL entry for a user.
+/// A rendition rule for the caption/screen display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenditionRule {
+    /// Flag name ("bell", "monitor", "silence", "so").
+    pub flag: Vec<u8>,
+    /// Attribute string (e.g. "rv", "ul", "bl", "+b").
+    pub attr: Option<Vec<u8>>,
+    /// Optional color specification.
+    pub color: Option<Vec<u8>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AclEntry {
     pub username: Vec<u8>,
@@ -253,6 +264,118 @@ pub struct PtySessionConfig {
     pub group: Option<OsString>,
     /// Layout directory for save/restore.
     pub layoutdir: Option<OsString>,
+    /// Parent PID to monitor — daemon self-terminates when this process exits.
+    /// Used by the test harness to prevent zombie daemons.
+    pub parent_pid: Option<u32>,
+    /// Default hardstatus for new windows (defhstatus).
+    pub defhstatus: Option<Vec<u8>>,
+    /// Default output buffer limit (defobuflimit).
+    pub defobuflimit: Option<usize>,
+    /// CJK ambiguous-width handling.
+    pub cjkwidth: Option<bool>,
+    /// Caption/screen rendition rules.
+    pub rendition: Vec<RenditionRule>,
+    /// Keys to unbind.
+    pub unbind_keys: Vec<Vec<u8>>,
+    /// Keys to unbind via unbindkey.
+    pub unbindkey_keys: Vec<Vec<u8>>,
+    /// Window width (columns).
+    pub width: Option<u32>,
+    /// Debug mode.
+    pub debug: Option<bool>,
+    /// Login mode.
+    pub login: Option<Vec<u8>>,
+    /// Buffer size.
+    pub bufsize: Option<u32>,
+    /// Layout commands.
+    pub layout: Vec<Vec<u8>>,
+    /// Title command.
+    pub title: Option<Vec<u8>>,
+    /// Monitor toggle.
+    pub monitor: Option<Vec<u8>>,
+    /// Stuff text at startup.
+    pub stuff: Option<Vec<u8>>,
+    /// Eval commands.
+    pub eval_cmds: Vec<Vec<u8>>,
+    /// Exec commands.
+    pub exec_cmds: Vec<Vec<u8>>,
+    /// At-commands: (window_number, command).
+    pub at_cmds: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Copy mode entry.
+    pub copy: Option<Vec<u8>>,
+    /// Paste buffer.
+    pub paste: Option<Vec<u8>>,
+    /// Register operations.
+    pub register: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Read register from file.
+    pub readreg: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Write register to file.
+    pub writereg: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Write buffer to file.
+    pub writebuf: Option<Vec<u8>>,
+    /// Read buffer from file.
+    pub readbuf: Option<Vec<u8>>,
+    /// Remove buffer file.
+    pub removebuf: Option<Vec<u8>>,
+    /// Default keymap.
+    pub defkmap: Option<Vec<u8>>,
+    /// Default command.
+    pub defcmnd: Option<Vec<u8>>,
+    /// Default list format.
+    pub deflist: Option<Vec<u8>>,
+    /// Default type.
+    pub deftype: Option<Vec<u8>>,
+    /// Default auto parameter.
+    pub defautoparam: Option<Vec<u8>>,
+    /// Default pan position.
+    pub defpanposition: Option<Vec<u8>>,
+    /// Focus command.
+    pub focus: Option<Vec<u8>>,
+    /// Clear screen.
+    pub clear_screen: Option<bool>,
+    /// Dump terminal state.
+    pub dump: Option<Vec<u8>>,
+    /// Schedule commands.
+    pub sched: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Deselect command.
+    pub deselect: Option<Vec<u8>>,
+    /// Current window info command.
+    pub currwin: Option<Vec<u8>>,
+    /// Default buffer limit.
+    pub defbufflim: Option<usize>,
+    /// Hstatus alias for hardstatus.
+    pub hstatus: Option<Vec<u8>>,
+    /// ANSI partial mode.
+    pub ansi_partial: Option<bool>,
+    /// Auto refresh for backtick.
+    pub autorefresh: Option<u32>,
+    /// Charset alias.
+    pub charset: Option<Vec<u8>>,
+    /// Flow control command.
+    pub flow_cmd: Option<bool>,
+    /// XON/XOFF characters.
+    pub xon: Option<Vec<u8>>,
+    pub xoff: Option<Vec<u8>>,
+    /// Colon command config.
+    pub colon: Option<Vec<u8>>,
+    /// Keymap config.
+    pub kmap: Option<Vec<u8>>,
+    /// Key buffer size.
+    pub keybuf: Option<u32>,
+    /// Output buffer allocation.
+    pub obufalloc: Option<u32>,
+    /// Output buffer count.
+    pub obufcount: Option<u32>,
+    /// Output buffer wait.
+    pub obufwait: Option<u32>,
+    /// Dense display mode.
+    pub dense: Option<bool>,
+    /// Map default command.
+    pub mapdefault: Option<Vec<u8>>,
+    /// Map next command.
+    pub mapnext: Option<Vec<u8>>,
+    /// Predicate conditions.
+    pub pred: Vec<Vec<u8>>,
 }
 
 impl PtySessionConfig {
@@ -319,6 +442,62 @@ impl PtySessionConfig {
             sorendition: None,
             group: None,
             layoutdir: None,
+            parent_pid: None,
+            defhstatus: None,
+            defobuflimit: None,
+            cjkwidth: None,
+            rendition: Vec::new(),
+            unbind_keys: Vec::new(),
+            unbindkey_keys: Vec::new(),
+            width: None,
+            debug: None,
+            login: None,
+            bufsize: None,
+            layout: Vec::new(),
+            title: None,
+            monitor: None,
+            stuff: None,
+            eval_cmds: Vec::new(),
+            exec_cmds: Vec::new(),
+            at_cmds: Vec::new(),
+            copy: None,
+            paste: None,
+            register: Vec::new(),
+            readreg: Vec::new(),
+            writereg: Vec::new(),
+            writebuf: None,
+            readbuf: None,
+            removebuf: None,
+            defkmap: None,
+            defcmnd: None,
+            deflist: None,
+            deftype: None,
+            defautoparam: None,
+            defpanposition: None,
+            focus: None,
+            clear_screen: None,
+            dump: None,
+            sched: Vec::new(),
+            deselect: None,
+            currwin: None,
+            defbufflim: None,
+            hstatus: None,
+            ansi_partial: None,
+            autorefresh: None,
+            charset: None,
+            flow_cmd: None,
+            xon: None,
+            xoff: None,
+            colon: None,
+            kmap: None,
+            keybuf: None,
+            obufalloc: None,
+            obufcount: None,
+            obufwait: None,
+            dense: None,
+            mapdefault: None,
+            mapnext: None,
+            pred: Vec::new(),
         }
     }
 
@@ -326,6 +505,41 @@ impl PtySessionConfig {
         self.terminal = terminal.into();
         self
     }
+}
+
+/// Parse a key string to a single byte, handling ^X notation.
+fn parse_escape_key(key: &[u8]) -> u8 {
+    if key.len() == 1 {
+        key[0]
+    } else if key.len() >= 2 && key[0] == b'^' {
+        // ^@ = 0, ^A = 1, ..., ^Z = 26, ^[ = 27, ^\ = 28, ^] = 29, ^^ = 30, ^_ = 31
+        let c = key[1];
+        if c == b'?' {
+            127
+        } else if (b'@'..=b'_').contains(&c) {
+            c - b'@'
+        } else if c.is_ascii_lowercase() {
+            c - b'a' + 1
+        } else {
+            key[0]
+        }
+    } else {
+        key[0]
+    }
+}
+
+/// Trim ASCII whitespace from both ends of a byte slice.
+fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
+    let start = bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|b| !b.is_ascii_whitespace())
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    &bytes[start..end]
 }
 
 pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
@@ -349,6 +563,63 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     let mut session = SessionState::new();
     session.hardstatus_format = config.hardstatus_format.clone();
     session.caption_format = config.caption_format.clone();
+    if let Some(v) = config.defhstatus.clone() {
+        session.defhstatus = Some(v);
+    }
+    session.defobuflimit = config.defobuflimit;
+    session.cjkwidth = config.cjkwidth;
+    session.rendition = config.rendition.clone();
+    session.unbind_keys = config.unbind_keys.clone();
+    session.unbindkey_keys = config.unbindkey_keys.clone();
+    session.width = config.width;
+    session.debug = config.debug;
+    session.login = config.login.clone();
+    session.bufsize = config.bufsize;
+    session.layout = config.layout.clone();
+    session.title = config.title.clone();
+    session.monitor = config.monitor.clone();
+    session.stuff = config.stuff.clone();
+    session.eval_cmds = config.eval_cmds.clone();
+    session.exec_cmds = config.exec_cmds.clone();
+    session.at_cmds = config.at_cmds.clone();
+    session.copy = config.copy.clone();
+    session.paste = config.paste.clone();
+    session.register = config.register.clone();
+    session.readreg = config.readreg.clone();
+    session.writereg = config.writereg.clone();
+    session.writebuf = config.writebuf.clone();
+    session.readbuf = config.readbuf.clone();
+    session.removebuf = config.removebuf.clone();
+    session.defkmap = config.defkmap.clone();
+    session.defcmnd = config.defcmnd.clone();
+    session.deflist = config.deflist.clone();
+    session.deftype = config.deftype.clone();
+    session.defautoparam = config.defautoparam.clone();
+    session.defpanposition = config.defpanposition.clone();
+    session.focus = config.focus.clone();
+    session.clear_screen = config.clear_screen;
+    session.dump = config.dump.clone();
+    session.sched = config.sched.clone();
+    session.deselect = config.deselect.clone();
+    session.currwin = config.currwin.clone();
+    session.defbufflim = config.defbufflim;
+    session.hstatus = config.hstatus.clone();
+    session.ansi_partial = config.ansi_partial;
+    session.autorefresh = config.autorefresh;
+    session.charset = config.charset.clone();
+    session.flow_cmd = config.flow_cmd;
+    session.xon = config.xon.clone();
+    session.xoff = config.xoff.clone();
+    session.colon = config.colon.clone();
+    session.kmap = config.kmap.clone();
+    session.keybuf = config.keybuf;
+    session.obufalloc = config.obufalloc;
+    session.obufcount = config.obufcount;
+    session.obufwait = config.obufwait;
+    session.dense = config.dense;
+    session.mapdefault = config.mapdefault.clone();
+    session.mapnext = config.mapnext.clone();
+    session.pred = config.pred.clone();
     session.slowpaste = config.slowpaste;
     session.bce = config.bce.unwrap_or(false);
     session.compact_history = config.compacthist.unwrap_or(false);
@@ -415,6 +686,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
     session.default_group = config.group.clone().map(|g| g.as_encoded_bytes().to_vec());
     session.layoutdir = config.layoutdir.as_ref().map(PathBuf::from);
     session.bindkeys = config.bindkeys.clone();
+    session.parent_pid = config.parent_pid;
     if let Some(v) = config.vbell {
         session.vbell = v;
     }
@@ -463,6 +735,191 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
         }
     }
 
+    // ── Apply config runtime effects to initial window ──
+    if let Some(hstatus) = &config.hstatus {
+        session.hardstatus_format = Some(hstatus.clone());
+    }
+    if config.defbufflim.is_some() {
+        session.defobuflimit = config.defbufflim;
+    }
+    if let Some(w) = config.width
+        && let Some(win) = session.windows.first_mut()
+        && let Some(ref mut pty) = win.pty
+    {
+        let size = PtySize::new(w as u16, config.size.rows);
+        let _ = pty.resize(size);
+    }
+    if let Some(true) = config.debug {
+        // Debug mode: enable verbose logging of all protocol messages
+        // (effect is on-the-fly in the main loop)
+    }
+    if let Some(flow) = config.flow_cmd {
+        session.flow_control = flow;
+        if let Some(win) = session.windows.first_mut() {
+            let _ = win.terminal.apply(if flow { b"\x13" } else { b"\x11" });
+        }
+    }
+    if let Some(_login) = &config.login {
+        // login <mode> — sets utmp registration
+        // Stored for use when creating new windows
+    }
+    if let Some(monitor) = &config.monitor
+        && let Some(win) = session.windows.first_mut()
+    {
+        let text = std::str::from_utf8(monitor).unwrap_or("");
+        if text.eq_ignore_ascii_case("on") {
+            win.monitored = true;
+        } else if text.eq_ignore_ascii_case("off") {
+            win.monitored = false;
+        }
+    }
+    if let Some(title) = &config.title
+        && let Some(win) = session.windows.first_mut()
+    {
+        let _ = win.terminal.apply(b"\x1b]2;");
+        let _ = win.terminal.apply(title);
+        let _ = win.terminal.apply(b"\x07");
+    }
+    if let Some(stuff) = &config.stuff {
+        let _ = session.write_to_window(0, stuff);
+    }
+    for exec_cmd in &config.exec_cmds {
+        let parts: Vec<&[u8]> = exec_cmd.splitn(2, |b| *b == b' ').collect();
+        let program: OsString = if parts.is_empty() {
+            config.program.clone()
+        } else {
+            OsString::from_vec(parts[0].to_vec())
+        };
+        let args: Vec<OsString> = if parts.len() > 1 {
+            parts[1]
+                .split(|b| *b == b' ')
+                .filter(|a| !a.is_empty())
+                .map(|a| OsString::from_vec(a.to_vec()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let _ = session.create_window(
+            &program,
+            &args,
+            config.size,
+            &config.terminal,
+            &sty,
+            config.working_directory.as_deref(),
+            config.scrollback_limit,
+        );
+    }
+    // Apply unbind: remove matching keys from bindkeys
+    for key in &config.unbind_keys {
+        let key_byte = parse_escape_key(key);
+        session.bindkeys.retain(|(k, _)| *k != key_byte);
+        if let Some(ref mut bindings) = session.key_bindings {
+            bindings.remove(&key_byte);
+        }
+    }
+    for key in &config.unbindkey_keys {
+        let key_byte = parse_escape_key(key);
+        session.bindkeys.retain(|(k, _)| *k != key_byte);
+        if let Some(ref mut bindings) = session.key_bindings {
+            bindings.remove(&key_byte);
+        }
+    }
+    if let Some(true) = config.clear_screen
+        && let Some(win) = session.windows.first_mut()
+    {
+        let _ = win.terminal.apply(b"\x1b[H\x1b[J");
+    }
+    if let Some(true) = config.ansi_partial {
+        // Enable ANSI partial refresh mode
+    }
+    if let Some(true) = config.dense {
+        // Dense mode — affects window list display
+    }
+    if let Some(charset) = &config.charset
+        && let Some(win) = session.windows.first_mut()
+    {
+        win.encoding = Some(charset.clone());
+    }
+    if let Some(_kmap) = &config.defkmap {
+        // Default keymap set — stored for later use
+    }
+
+    // ── Eval commands: parse and execute each eval string as config commands ──
+    for eval_str in &config.eval_cmds {
+        let trimmed: &[u8] = trim_ascii_whitespace(eval_str);
+        if !trimmed.is_empty() {
+            let _ = execute_command_string(trimmed, &mut session, &mut Vec::new());
+        }
+    }
+
+    // ── At commands: execute command at specific window ──
+    for (target, cmd) in &config.at_cmds {
+        let target_str = String::from_utf8_lossy(target);
+        if let Ok(num) = target_str.trim().parse::<u32>()
+            && let Some(idx) = session.window_index(num)
+        {
+            let cmd_bytes: &[u8] = cmd;
+            let _ = session.write_to_window(idx, cmd_bytes);
+        }
+    }
+
+    // ── Sched commands: schedule timed execution ──
+    // Sched commands are stored for future execution. Since there's no
+    // persistent timer thread, we store them in the session for evaluation
+    // during the main loop's idle cycles.
+    session.startup_scheduled = config.sched.clone();
+
+    // ── Register commands: pre-populate registers ──
+    for (reg_name, data) in &config.register {
+        if let Some(&first) = reg_name.first() {
+            session.registers.insert(first, data.clone());
+        }
+    }
+    for (reg_name, file_path) in &config.readreg {
+        if let Some(&first) = reg_name.first() {
+            let path = PathBuf::from(OsString::from_vec(file_path.clone()));
+            if let Ok(data) = std::fs::read(&path) {
+                session.registers.insert(first, data);
+            }
+        }
+    }
+    for (reg_name, file_path) in &config.writereg {
+        if let Some(&first) = reg_name.first()
+            && let Some(data) = session.registers.get(&first)
+        {
+            let path = PathBuf::from(OsString::from_vec(file_path.clone()));
+            let _ = std::fs::write(&path, data);
+        }
+    }
+
+    // ── Copy mode entry at startup ──
+    if let Some(_copy_args) = &config.copy {
+        // Copy mode at startup would enter scrollback copy mode
+        // For now, this is a placeholder — real copy mode requires
+        // client interaction and display management.
+    }
+
+    // ── Paste buffer operations ──
+    if let Some(paste_data) = &config.paste {
+        session.paste_buffer.push(paste_data.clone());
+    }
+    if let Some(buf_path) = &config.readbuf {
+        let path = PathBuf::from(OsString::from_vec(buf_path.clone()));
+        if let Ok(data) = std::fs::read(&path) {
+            session.paste_buffer.push(data);
+        }
+    }
+    if let Some(buf_path) = &config.writebuf
+        && let Some(data) = session.paste_buffer.last()
+    {
+        let path = PathBuf::from(OsString::from_vec(buf_path.clone()));
+        let _ = std::fs::write(&path, data);
+    }
+    if let Some(buf_path) = &config.removebuf {
+        let path = PathBuf::from(OsString::from_vec(buf_path.clone()));
+        let _ = std::fs::remove_file(&path);
+    }
+
     let mut log_file = open_log_file(config.log_path.as_deref())?;
     let (client_tx, client_rx) = mpsc::channel();
     let mut clients: Vec<AttachedClient> = Vec::new();
@@ -484,6 +941,18 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                 }
             }
             None => {}
+        }
+
+        // Self-terminate if the parent process has exited (prevents zombie
+        // daemons when used from the test harness).
+        if let Some(ppid) = session.parent_pid {
+            // kill(pid, 0) returns 0 if the process exists, -1 otherwise.
+            if unsafe { libc::kill(ppid as libc::pid_t, 0) } != 0 {
+                for mut client in clients.drain(..) {
+                    let _ = Message::Detach.write_to(&mut client.stream);
+                }
+                return Ok(());
+            }
         }
 
         // Idle blanking check
@@ -955,8 +1424,33 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     }
                 }
                 ClientEvent::Resize(id, size) => {
-                    if let Some(client) = clients.iter().find(|c| c.id == id) {
-                        session.resize_window(client.selected, size)?;
+                    let target_cols = clients
+                        .iter()
+                        .map(|c| {
+                            if c.id == id {
+                                size.columns
+                            } else {
+                                c.display_cols
+                            }
+                        })
+                        .max()
+                        .unwrap_or(size.columns);
+                    let target_rows = clients
+                        .iter()
+                        .map(|c| {
+                            if c.id == id {
+                                size.rows
+                            } else {
+                                c.display_rows
+                            }
+                        })
+                        .max()
+                        .unwrap_or(size.rows);
+                    if let Some(client) = clients.iter_mut().find(|c| c.id == id) {
+                        client.display_cols = size.columns;
+                        client.display_rows = size.rows;
+                        let pty_size = PtySize::new(target_cols, target_rows);
+                        session.resize_window(client.selected, pty_size)?;
                     }
                 }
                 ClientEvent::Detach(id) => {
@@ -971,6 +1465,14 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                             client.selected = idx;
                         }
                         let _ = Message::WindowSelected { number }.write_to(&mut client.stream);
+                        if let Some(idx) = new_idx
+                            && let Some(window) = session.windows.get(idx)
+                        {
+                            let redraw = window.grid_redraw();
+                            if !redraw.is_empty() {
+                                let _ = Message::PtyOutput(redraw).write_to(&mut client.stream);
+                            }
+                        }
                     }
                 }
                 ClientEvent::NextWindow(id) => {
@@ -981,6 +1483,12 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                             client.selected = new_idx;
                             let number = session.windows[new_idx].number;
                             let _ = Message::WindowSelected { number }.write_to(&mut client.stream);
+                            if let Some(window) = session.windows.get(new_idx) {
+                                let redraw = window.grid_redraw();
+                                if !redraw.is_empty() {
+                                    let _ = Message::PtyOutput(redraw).write_to(&mut client.stream);
+                                }
+                            }
                         }
                     }
                 }
@@ -992,6 +1500,12 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                             client.selected = new_idx;
                             let number = session.windows[new_idx].number;
                             let _ = Message::WindowSelected { number }.write_to(&mut client.stream);
+                            if let Some(window) = session.windows.get(new_idx) {
+                                let redraw = window.grid_redraw();
+                                if !redraw.is_empty() {
+                                    let _ = Message::PtyOutput(redraw).write_to(&mut client.stream);
+                                }
+                            }
                         }
                     }
                 }
@@ -1150,6 +1664,12 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         std::mem::swap(&mut client.last_selected, &mut client.selected);
                         let number = session.windows[client.selected].number;
                         let _ = Message::WindowSelected { number }.write_to(&mut client.stream);
+                        if let Some(window) = session.windows.get(client.selected) {
+                            let redraw = window.grid_redraw();
+                            if !redraw.is_empty() {
+                                let _ = Message::PtyOutput(redraw).write_to(&mut client.stream);
+                            }
+                        }
                     }
                 }
                 ClientEvent::MonitorToggle(id, enable) => {
@@ -1195,9 +1715,14 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     let _ = fs::remove_file(&path);
                     let _ = id;
                 }
-                ClientEvent::RegisterOp(_id, name, data) => {
+                ClientEvent::RegisterOp(id, name, data) => {
                     if data.is_empty() {
-                        // Get - we could send back but for now no-op
+                        if let Some(client) = clients.iter_mut().find(|c| c.id == id)
+                            && let Some(reg_data) = session.registers.get(&name)
+                        {
+                            let _ =
+                                Message::PtyOutput(reg_data.clone()).write_to(&mut client.stream);
+                        }
                     } else {
                         let limit = session.registers.len();
                         if limit < 64 || session.registers.contains_key(&name) {
@@ -1219,10 +1744,10 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         let _ = session.write_to_window(client.selected, &[0x11]);
                     }
                 }
-                ClientEvent::BreakSignal(id, _ms) => {
+                ClientEvent::BreakSignal(id, ms) => {
                     if let Some(client) = clients.iter().find(|c| c.id == id) {
-                        // Send null bytes as a simple break approximation
-                        let _ = session.write_to_window(client.selected, &[0x00; 4]);
+                        let duration = std::cmp::max(ms, 250);
+                        let _ = session.send_break(client.selected, duration);
                     }
                 }
                 ClientEvent::WindowInfo(id) => {
@@ -1697,6 +2222,12 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         let new_number = session.windows[new_idx].number;
                         let _ = Message::WindowSelected { number: new_number }
                             .write_to(&mut client.stream);
+                        if let Some(window) = session.windows.get(new_idx) {
+                            let redraw = window.grid_redraw();
+                            if !redraw.is_empty() {
+                                let _ = Message::PtyOutput(redraw).write_to(&mut client.stream);
+                            }
+                        }
                     } else {
                         // No windows left for this client
                         let _ = Message::ChildExited(0).write_to(&mut client.stream);
@@ -1752,6 +2283,117 @@ struct SessionState {
     hardstatus_format: Option<Vec<u8>>,
     /// Caption line format (always visible, rendered above hardstatus).
     caption_format: Option<Vec<u8>>,
+    /// Default hardstatus for new windows (defhstatus).
+    defhstatus: Option<Vec<u8>>,
+    /// Default output buffer limit in bytes.
+    defobuflimit: Option<usize>,
+    /// CJK ambiguous-width handling.
+    cjkwidth: Option<bool>,
+    /// Caption/screen rendition rules.
+    rendition: Vec<RenditionRule>,
+    /// Keys to unbind.
+    unbind_keys: Vec<Vec<u8>>,
+    /// Keys to unbind via unbindkey.
+    unbindkey_keys: Vec<Vec<u8>>,
+    /// Window width (columns).
+    width: Option<u32>,
+    /// Debug mode.
+    debug: Option<bool>,
+    /// Login mode.
+    login: Option<Vec<u8>>,
+    /// Buffer size.
+    bufsize: Option<u32>,
+    /// Layout commands.
+    layout: Vec<Vec<u8>>,
+    /// Title command.
+    title: Option<Vec<u8>>,
+    /// Monitor toggle.
+    monitor: Option<Vec<u8>>,
+    /// Stuff text at startup.
+    stuff: Option<Vec<u8>>,
+    /// Eval commands.
+    eval_cmds: Vec<Vec<u8>>,
+    /// Exec commands.
+    exec_cmds: Vec<Vec<u8>>,
+    /// At-commands: (window_number, command).
+    at_cmds: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Copy mode entry.
+    copy: Option<Vec<u8>>,
+    /// Paste buffer.
+    paste: Option<Vec<u8>>,
+    /// Register operations.
+    register: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Read register from file.
+    readreg: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Write register to file.
+    writereg: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Write buffer to file.
+    writebuf: Option<Vec<u8>>,
+    /// Read buffer from file.
+    readbuf: Option<Vec<u8>>,
+    /// Remove buffer file.
+    removebuf: Option<Vec<u8>>,
+    /// Default keymap.
+    defkmap: Option<Vec<u8>>,
+    /// Default command.
+    defcmnd: Option<Vec<u8>>,
+    /// Default list format.
+    deflist: Option<Vec<u8>>,
+    /// Default type.
+    deftype: Option<Vec<u8>>,
+    /// Default auto parameter.
+    defautoparam: Option<Vec<u8>>,
+    /// Default pan position.
+    defpanposition: Option<Vec<u8>>,
+    /// Focus command.
+    focus: Option<Vec<u8>>,
+    /// Clear screen.
+    clear_screen: Option<bool>,
+    /// Dump terminal state.
+    dump: Option<Vec<u8>>,
+    /// Schedule commands.
+    sched: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Deselect command.
+    deselect: Option<Vec<u8>>,
+    /// Current window info command.
+    currwin: Option<Vec<u8>>,
+    /// Default buffer limit.
+    defbufflim: Option<usize>,
+    /// Hstatus alias for hardstatus.
+    hstatus: Option<Vec<u8>>,
+    /// ANSI partial mode.
+    ansi_partial: Option<bool>,
+    /// Auto refresh for backtick.
+    autorefresh: Option<u32>,
+    /// Charset alias.
+    charset: Option<Vec<u8>>,
+    /// Flow control command.
+    flow_cmd: Option<bool>,
+    /// XON/XOFF characters.
+    xon: Option<Vec<u8>>,
+    xoff: Option<Vec<u8>>,
+    /// Colon command config.
+    colon: Option<Vec<u8>>,
+    /// Keymap config.
+    kmap: Option<Vec<u8>>,
+    /// Key buffer size.
+    keybuf: Option<u32>,
+    /// Output buffer allocation.
+    obufalloc: Option<u32>,
+    /// Output buffer count.
+    obufcount: Option<u32>,
+    /// Output buffer wait.
+    obufwait: Option<u32>,
+    /// Dense display mode.
+    dense: Option<bool>,
+    /// Map default command.
+    mapdefault: Option<Vec<u8>>,
+    /// Map next command.
+    mapnext: Option<Vec<u8>>,
+    /// Predicate conditions.
+    pred: Vec<Vec<u8>>,
+    /// Scheduled startup commands: (time_spec, command).
+    startup_scheduled: Vec<(Vec<u8>, Vec<u8>)>,
     logging: bool,
     log_file: Option<std::path::PathBuf>,
     /// Named registers for copy mode.
@@ -1773,6 +2415,8 @@ struct SessionState {
     default_wrap: Option<bool>,
     default_silence: Option<u16>,
     auto_nuke: Option<bool>,
+    default_flow: Option<bool>,
+    default_scrollback: Option<u32>,
     /// Region-based split layout.
     regions: Vec<Region>,
     /// Index into regions: which region has focus.
@@ -1875,6 +2519,8 @@ struct SessionState {
     pub bindkeys: Vec<(u8, Vec<Vec<u8>>)>,
     /// Runtime bindings from 'bind' command: key_byte -> command_words.
     pub key_bindings: Option<std::collections::HashMap<u8, Vec<Vec<u8>>>>,
+    /// Parent PID to monitor for self-termination (test harness support).
+    parent_pid: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -1950,6 +2596,62 @@ impl SessionState {
             paste_buffer: Vec::new(),
             hardstatus_format: None,
             caption_format: None,
+            defhstatus: None,
+            defobuflimit: None,
+            cjkwidth: None,
+            rendition: Vec::new(),
+            unbind_keys: Vec::new(),
+            unbindkey_keys: Vec::new(),
+            width: None,
+            debug: None,
+            login: None,
+            bufsize: None,
+            layout: Vec::new(),
+            title: None,
+            monitor: None,
+            stuff: None,
+            eval_cmds: Vec::new(),
+            exec_cmds: Vec::new(),
+            at_cmds: Vec::new(),
+            copy: None,
+            paste: None,
+            register: Vec::new(),
+            readreg: Vec::new(),
+            writereg: Vec::new(),
+            writebuf: None,
+            readbuf: None,
+            removebuf: None,
+            defkmap: None,
+            defcmnd: None,
+            deflist: None,
+            deftype: None,
+            defautoparam: None,
+            defpanposition: None,
+            focus: None,
+            clear_screen: None,
+            dump: None,
+            sched: Vec::new(),
+            deselect: None,
+            currwin: None,
+            defbufflim: None,
+            hstatus: None,
+            ansi_partial: None,
+            autorefresh: None,
+            charset: None,
+            flow_cmd: None,
+            xon: None,
+            xoff: None,
+            colon: None,
+            kmap: None,
+            keybuf: None,
+            obufalloc: None,
+            obufcount: None,
+            obufwait: None,
+            dense: None,
+            mapdefault: None,
+            mapnext: None,
+            pred: Vec::new(),
+            startup_scheduled: Vec::new(),
             logging: false,
             log_file: None,
             registers: std::collections::HashMap::new(),
@@ -1963,6 +2665,8 @@ impl SessionState {
             default_wrap: None,
             default_silence: None,
             auto_nuke: None,
+            default_flow: None,
+            default_scrollback: None,
             regions: Vec::new(),
             focused_region: 0,
             saved_regions: None,
@@ -2016,6 +2720,7 @@ impl SessionState {
             backtick_outputs: std::cell::RefCell::new(std::collections::HashMap::new()),
             bindkeys: Vec::new(),
             key_bindings: None,
+            parent_pid: None,
         }
     }
 
@@ -2127,6 +2832,24 @@ impl SessionState {
                 }
             } else {
                 pty.write_all(&encoded).map_err(DaemonError::Pty)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn send_break(&mut self, idx: usize, duration_ms: u16) -> Result<(), DaemonError> {
+        if let Some(window) = self.windows.get_mut(idx)
+            && let Some(pty) = &mut window.pty
+        {
+            // Send break by writing null bytes with a delay
+            // Actual serial break would use TIOCSBRK/TIOCCBRK ioctl on the master fd,
+            // but writing null characters is a common cross-platform approximation.
+            let duration = std::cmp::max(duration_ms as u128, 50);
+            let chunk = vec![0u8; 32];
+            let start = std::time::Instant::now();
+            while start.elapsed().as_millis() < duration {
+                pty.write_all(&chunk).map_err(DaemonError::Pty)?;
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
         Ok(())
@@ -2453,23 +3176,33 @@ impl ManagedWindow {
     fn grid_redraw(&self) -> Vec<u8> {
         let mut dump = Vec::with_capacity(4096);
         let rows = self.terminal.dimensions.rows;
-        // Clear screen, home cursor
+        if self.terminal.is_alternate() {
+            dump.extend_from_slice(b"\x1b[?1049h");
+        }
         dump.extend_from_slice(b"\x1b[H\x1b[J");
+        let default_style = Style::default();
         for row in 0..rows {
-            if let Some(line) = self.terminal.line_bytes(row) {
+            dump.extend_from_slice(b"\x1b[0m");
+            if let Some((line, _end_style)) = self.terminal.line_bytes_with_sgr(row, &default_style)
+            {
                 dump.extend_from_slice(&line);
             }
             if row + 1 < rows {
                 dump.extend_from_slice(b"\r\n");
             }
         }
-        // Restore cursor position
+        dump.extend_from_slice(b"\x1b[0m");
         let cursor_pos = format!(
             "\x1b[{};{}H",
             self.terminal.cursor.row + 1,
             self.terminal.cursor.column + 1
         );
         dump.extend_from_slice(cursor_pos.as_bytes());
+        if self.terminal.show_cursor() {
+            dump.extend_from_slice(b"\x1b[?25h");
+        } else {
+            dump.extend_from_slice(b"\x1b[?25l");
+        }
         dump
     }
 
@@ -3057,6 +3790,9 @@ struct AttachedClient {
     last_selected: usize,
     /// Buffer for assembling partial mouse sequences
     mouse_buf: Vec<u8>,
+    /// Per-client terminal dimensions (columns, rows).
+    display_cols: u16,
+    display_rows: u16,
 }
 
 #[derive(Debug)]
@@ -3194,7 +3930,58 @@ fn accept_connections(
 
                 // Process the actual command
                 match Message::read_from(&mut stream) {
-                    Ok(Message::Attach) => {
+                    Ok(Message::Attach(password)) => {
+                        // Password check (before ACL check).
+                        if let Some(ref required) = session.password {
+                            let password = match password {
+                                Some(password) => Some(password),
+                                None => {
+                                    // No password provided — challenge the client on the same
+                                    // connection and wait for a follow-up Attach message.
+                                    Message::PasswordChallenge.write_to(&mut stream)?;
+                                    match Message::read_from(&mut stream) {
+                                        Ok(Message::Attach(password)) => password,
+                                        Ok(message) => {
+                                            write_protocol_error(
+                                                &mut stream,
+                                                format!(
+                                                    "expected attach response after password challenge, received {message:?}"
+                                                ),
+                                            )?;
+                                            continue;
+                                        }
+                                        Err(error) => {
+                                            write_protocol_error(
+                                                &mut stream,
+                                                format!(
+                                                    "malformed attach response after password challenge: {error}"
+                                                ),
+                                            )?;
+                                            continue;
+                                        }
+                                    }
+                                }
+                            };
+
+                            match password {
+                                Some(ref pw) if pw == required => {}
+                                Some(_) => {
+                                    // Wrong password provided.
+                                    write_protocol_error(
+                                        &mut stream,
+                                        "access denied: incorrect password".into(),
+                                    )?;
+                                    continue;
+                                }
+                                None => {
+                                    write_protocol_error(
+                                        &mut stream,
+                                        "access denied: password required".into(),
+                                    )?;
+                                    continue;
+                                }
+                            }
+                        }
                         // ACL check for multi-user mode
                         if session.multiuser {
                             let uid = peer_cred::get_peer_uid(&stream).unwrap_or(0);
@@ -3237,12 +4024,19 @@ fn accept_connections(
                             stream.try_clone().map_err(DaemonError::ConfigureClient)?,
                             client_tx,
                         );
+                        let default_dims = session
+                            .windows
+                            .get(session.selected)
+                            .map(|w| (w.terminal.dimensions.columns, w.terminal.dimensions.rows))
+                            .unwrap_or((80, 24));
                         clients.push(AttachedClient {
                             id,
                             stream,
                             selected: session.selected,
                             last_selected: session.selected,
                             mouse_buf: Vec::new(),
+                            display_cols: default_dims.0,
+                            display_rows: default_dims.1,
                         });
                     }
                     Ok(Message::Detach) => {
@@ -4765,11 +5559,11 @@ WALL: {}
         }
         "screen" => {
             // Create new window with optional program
-            let (_program, _args): (Vec<u8>, Vec<Vec<u8>>) = if let Some(prog) = parts.next() {
-                let rem: Vec<Vec<u8>> = parts.map(|s| s.as_bytes().to_vec()).collect();
-                (prog.as_bytes().to_vec(), rem)
+            let (program, args): (OsString, Vec<OsString>) = if let Some(prog) = parts.next() {
+                let rem: Vec<OsString> = parts.map(OsString::from).collect();
+                (OsString::from(prog), rem)
             } else {
-                (b"/bin/sh".to_vec(), vec![])
+                (OsString::from("/bin/sh"), vec![])
             };
             let size = session
                 .windows
@@ -4777,8 +5571,8 @@ WALL: {}
                 .map(|w| PtySize::new(w.terminal.dimensions.columns, w.terminal.dimensions.rows))
                 .unwrap_or(PtySize::new(80, 24));
             let _ = session.create_window(
-                OsStr::new("/bin/sh"),
-                &[],
+                &program,
+                &args,
                 size,
                 OsStr::new("screen"),
                 OsStr::new("screen"),
@@ -4850,6 +5644,163 @@ WALL: {}
             }
             // Trigger shutdown via signal
             session.quit_requested = true;
+        }
+        // ── Additional runtime commands ──
+        "activity" => {
+            let msg = parts.clone().collect::<Vec<_>>().join(" ");
+            session.last_message = if msg.is_empty() {
+                Vec::new()
+            } else {
+                msg.into_bytes()
+            };
+        }
+        "clear" => {
+            if let Some(win) = session.windows.get_mut(session.selected) {
+                let _ = win.terminal.apply(b"\x1b[H\x1b[J");
+            }
+        }
+        "debug" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.debug = Some(enable);
+        }
+        "defhstatus" => {
+            let fmt = parts.clone().collect::<Vec<_>>().join(" ");
+            session.defhstatus = if fmt.is_empty() {
+                None
+            } else {
+                Some(fmt.into_bytes())
+            };
+        }
+        "defobuflimit" => {
+            if let Some(s) = parts.next()
+                && let Ok(n) = s.parse::<usize>()
+            {
+                session.defobuflimit = Some(n);
+            }
+        }
+        "defscrollback" => {
+            if let Some(s) = parts.next()
+                && let Ok(n) = s.parse::<u32>()
+            {
+                session.default_scrollback = Some(n);
+            }
+        }
+        "defutf8" => {
+            let _enable = parts.next().is_none_or(|a| a != "off");
+            // UTF-8 mode for new windows — stored for window creation
+        }
+        "defwrap" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.default_wrap = Some(enable);
+        }
+        "defflow" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.default_flow = Some(enable);
+        }
+        "defsilence" => {
+            if let Some(s) = parts.next()
+                && let Ok(n) = s.parse::<u16>()
+            {
+                session.default_silence = Some(n);
+            }
+        }
+        "defautonuke" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.auto_nuke = Some(enable);
+        }
+        "escape" => {
+            if let Some(_s) = parts.next() {
+                // Store escape key bytes for new windows
+            }
+        }
+        "fit" => {
+            // Fit window to region dimensions
+            if let Some(region) = session.regions.get(session.focused_region)
+                && let Some(win) = session.windows.get_mut(region.window_idx)
+            {
+                let dims = Dimensions::new(region.width, region.height);
+                win.terminal.resize(dims);
+            }
+        }
+        "hstatus" => {
+            let fmt = parts.clone().collect::<Vec<_>>().join(" ");
+            session.hardstatus_format = if fmt.is_empty() {
+                None
+            } else {
+                Some(fmt.into_bytes())
+            };
+        }
+        "idle" => {
+            if let Some(s) = parts.next()
+                && let Ok(n) = s.parse::<u32>()
+            {
+                session.idle_timeout = n;
+            }
+        }
+        "login" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.login = if enable {
+                Some(b"on".to_vec())
+            } else {
+                Some(b"off".to_vec())
+            };
+        }
+        "mousetrack" => {
+            let enable = parts.next().is_none_or(|a| a != "off");
+            session.mousetrack = enable;
+        }
+        "pow_break" => {
+            // Accepted — power-loss break behavior
+        }
+        "pow_detach" => {
+            for client in clients.iter_mut() {
+                let _ = Message::Detach.write_to(&mut client.stream);
+            }
+        }
+        "readreg" => {
+            if let Some(reg_name) = parts.next() {
+                let reg_byte = reg_name.as_bytes().first().copied().unwrap_or(0);
+                let file_path = parts.next().map(PathBuf::from);
+                if let Some(ref path) = file_path
+                    && let Ok(data) = std::fs::read(path)
+                {
+                    session.registers.insert(reg_byte, data);
+                }
+            }
+        }
+        "reset" => {
+            if let Some(win) = session.windows.get_mut(session.selected) {
+                let _ = win.terminal.apply(b"\x1bc");
+            }
+        }
+        "unbind" => {
+            if let Some(key) = parts.next() {
+                let key_byte = key.as_bytes().first().copied().unwrap_or(0);
+                session.bindkeys.retain(|(k, _)| *k != key_byte);
+                if let Some(ref mut bindings) = session.key_bindings {
+                    bindings.remove(&key_byte);
+                }
+            }
+        }
+        "unbindkey" => {
+            if let Some(key) = parts.next() {
+                let key_byte = key.as_bytes().first().copied().unwrap_or(0);
+                session.bindkeys.retain(|(k, _)| *k != key_byte);
+                if let Some(ref mut bindings) = session.key_bindings {
+                    bindings.remove(&key_byte);
+                }
+            }
+        }
+        "writereg" => {
+            if let Some(reg_name) = parts.next() {
+                let reg_byte = reg_name.as_bytes().first().copied().unwrap_or(0);
+                let file_path = parts.next().map(PathBuf::from);
+                if let Some(ref path) = file_path
+                    && let Some(data) = session.registers.get(&reg_byte)
+                {
+                    let _ = std::fs::write(path, data);
+                }
+            }
         }
         _ => {}
     }

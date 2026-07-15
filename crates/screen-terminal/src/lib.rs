@@ -352,6 +352,40 @@ impl Grid {
         }
         Some(bytes)
     }
+
+    /// Emit one line as bytes with SGR escape sequences for cell styling.
+    /// The caller should emit `ESC[0m` before the first line and after the
+    /// last so that the terminal attribute state is clean.
+    fn line_bytes_with_sgr(&self, row: u16, prev_style: &Style) -> Option<(Vec<u8>, Style)> {
+        if row >= self.rows {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        let mut active = *prev_style;
+        let mut last_style = *prev_style;
+        for column in 0..self.columns {
+            let cell = &self.cells[self.index(column, row)];
+            if cell.is_continuation() {
+                continue;
+            }
+            // Emit SGR when style changes
+            if cell.style != active {
+                sgr_diff(&mut bytes, &active, &cell.style);
+                active = cell.style;
+            }
+            if cell.is_blank() {
+                bytes.push(b' ');
+            } else {
+                bytes.extend_from_slice(&cell.bytes);
+            }
+            last_style = cell.style;
+        }
+        // Trim trailing spaces (they represent defaults and are not needed)
+        while bytes.last() == Some(&b' ') {
+            bytes.pop();
+        }
+        Some((bytes, last_style))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -595,6 +629,13 @@ impl TerminalState {
         self.grid().line_bytes(row)
     }
 
+    /// Like `line_bytes` but emits SGR escape sequences for cell styling.
+    /// Returns the rendered bytes and the style of the last rendered cell
+    /// so the caller can chain multiple line renders without redundant resets.
+    pub fn line_bytes_with_sgr(&self, row: u16, prev: &Style) -> Option<(Vec<u8>, Style)> {
+        self.grid().line_bytes_with_sgr(row, prev)
+    }
+
     pub fn plain_text(&self) -> String {
         let grid = self.grid();
         (0..grid.rows)
@@ -612,6 +653,16 @@ impl TerminalState {
     /// Whether mouse reporting is enabled (any mode).
     pub fn mouse_mode(&self) -> MouseMode {
         self.modes.mouse_mode
+    }
+
+    /// Whether the cursor is currently visible.
+    pub fn show_cursor(&self) -> bool {
+        self.modes.show_cursor
+    }
+
+    /// Whether the alternate screen is active.
+    pub fn is_alternate(&self) -> bool {
+        self.using_alternate
     }
 
     /// Consume and return whether a bell has occurred since the last call.
@@ -1765,6 +1816,98 @@ fn write_uint(buf: &mut Vec<u8>, mut n: u64) {
     for i in (0..pos).rev() {
         buf.push(digits[i]);
     }
+}
+
+// ---------------------------------------------------------------------------
+// SGR diff helper — emit escape sequences for style transitions
+// ---------------------------------------------------------------------------
+
+fn sgr_diff(buf: &mut Vec<u8>, from: &Style, to: &Style) {
+    // If going to default style, emit SGR0
+    if *to == Style::default() {
+        buf.extend_from_slice(b"\x1b[0m");
+        return;
+    }
+    // If coming from default, just set needed attributes
+    if *from == Style::default() {
+        buf.extend_from_slice(b"\x1b[");
+        let mut first = true;
+        write_style_params(buf, to, &mut first);
+        buf.push(b'm');
+        return;
+    }
+    // Diff: reset to default then set new attributes
+    buf.extend_from_slice(b"\x1b[0;");
+    let mut first = false;
+    write_style_params(buf, to, &mut first);
+    buf.push(b'm');
+}
+
+fn write_style_params(buf: &mut Vec<u8>, style: &Style, first: &mut bool) {
+    let mut emit = |n: u8| {
+        if !*first {
+            buf.push(b';');
+        }
+        *first = false;
+        push_dec(buf, n);
+    };
+    if style.bold {
+        emit(1);
+    }
+    if style.italic {
+        emit(3);
+    }
+    if style.underline {
+        emit(4);
+    }
+    if style.blink {
+        emit(5);
+    }
+    if style.reverse {
+        emit(7);
+    }
+    match style.foreground {
+        Some(Color::Basic(c)) => emit(30 + c),
+        Some(Color::Indexed(c)) => {
+            emit(38);
+            emit(5);
+            emit(c);
+        }
+        Some(Color::Rgb(r, g, b)) => {
+            emit(38);
+            emit(2);
+            emit(r);
+            emit(g);
+            emit(b);
+        }
+        None => {}
+    }
+    match style.background {
+        Some(Color::Basic(c)) => emit(40 + c),
+        Some(Color::Indexed(c)) => {
+            emit(48);
+            emit(5);
+            emit(c);
+        }
+        Some(Color::Rgb(r, g, b)) => {
+            emit(48);
+            emit(2);
+            emit(r);
+            emit(g);
+            emit(b);
+        }
+        None => {}
+    }
+}
+
+fn push_dec(buf: &mut Vec<u8>, n: u8) {
+    if n >= 100 {
+        buf.push(b'0' + n / 100);
+    }
+    if n >= 10 {
+        buf.push(b'0' + (n / 10) % 10);
+    }
+    buf.push(b'0' + n % 10);
 }
 
 #[cfg(test)]

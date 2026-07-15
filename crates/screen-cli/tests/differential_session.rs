@@ -5,6 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -97,6 +98,8 @@ fn attached_create_compares_with_gnu_screen() {
         );
         eprintln!("reference flags: {:?}", reference_result.flags());
         eprintln!("reference diagnostics: {:?}", reference_result.diagnostics);
+        eprintln!("candidate flags: {:?}", candidate_result.flags());
+        eprintln!("candidate diagnostics: {:?}", candidate_result.diagnostics);
     } else if !candidate_result.completed() {
         eprintln!("attached_create differential report");
         eprintln!("reference flags: {:?}", reference_result.flags());
@@ -984,7 +987,14 @@ fn run_multi_window_case(
         ],
         Duration::from_secs(5),
     ) {
-        Ok(status) if status.success() => {}
+        Ok(status) if status.success() => {
+            if !wait_until_session_present(executable, runtime, session_name) {
+                result
+                    .diagnostics
+                    .push("session did not become listable after start".to_owned());
+                return result;
+            }
+        }
         Ok(status) => {
             result
                 .diagnostics
@@ -1970,7 +1980,11 @@ fn start_detached_loop(executable: &Path, runtime: &Path, session_name: &str) ->
         Duration::from_secs(5),
     )?;
     if status.success() {
-        Ok(())
+        if wait_until_session_present(executable, runtime, session_name) {
+            Ok(())
+        } else {
+            Err(io::Error::other("session did not become listable after detached start"))
+        }
     } else {
         Err(io::Error::other(format!(
             "detached start exited with {status}"
@@ -2602,6 +2616,25 @@ fn quit_session(
     }
 }
 
+fn wait_until_session_present(executable: &Path, runtime: &Path, session_name: &str) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(list) = run_screen(
+            executable,
+            runtime,
+            [OsStr::new("-ls")],
+            Duration::from_secs(2),
+        ) && output_lists_session(&list, session_name)
+        {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 fn wait_until_no_session(
     implementation: Implementation,
     executable: &Path,
@@ -2663,15 +2696,51 @@ struct TempDir {
     path: PathBuf,
 }
 
+static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+thread_local! {
+    static TEST_LOCK_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TEST_LOCK_GUARD: std::cell::RefCell<Option<std::sync::MutexGuard<'static, ()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn acquire_test_lock() {
+    TEST_LOCK_DEPTH.with(|depth| {
+        let current = depth.get();
+        if current == 0 {
+            TEST_LOCK_GUARD.with(|guard| {
+                *guard.borrow_mut() = Some(
+                    TEST_MUTEX
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                );
+            });
+        }
+        depth.set(current + 1);
+    });
+}
+
+fn release_test_lock() {
+    TEST_LOCK_DEPTH.with(|depth| {
+        let current = depth.get();
+        if current <= 1 {
+            TEST_LOCK_GUARD.with(|guard| {
+                guard.borrow_mut().take();
+            });
+            depth.set(0);
+        } else {
+            depth.set(current - 1);
+        }
+    });
+}
+
 impl TempDir {
     fn new(name: &str) -> Self {
+        acquire_test_lock();
         // Keep path short to fit Unix socket paths within SUN_LEN (104 on macOS)
         let short = if name.len() > 8 { &name[..8] } else { name };
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos();
-        let path = temp_base().join(format!("sd-{short}-{nanos}"));
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = temp_base().join(format!("sd-{short}-{}-{seq}", std::process::id()));
         fs::create_dir(&path).unwrap_or_else(|error| {
             panic!(
                 "failed to create temporary directory {}: {error}",
@@ -2695,6 +2764,7 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
+        release_test_lock();
     }
 }
 
@@ -2722,6 +2792,7 @@ fn run_screen<'a>(
     args: impl IntoIterator<Item = &'a OsStr>,
     timeout: Duration,
 ) -> io::Result<CommandOutput> {
+    let home = ensure_test_home(runtime);
     let stdout_path = runtime.join(format!(
         "capture-{}-{}.stdout",
         std::process::id(),
@@ -2737,6 +2808,8 @@ fn run_screen<'a>(
 
     let mut child = Command::new(executable)
         .args(args)
+        .env("HOME", &home)
+        .env("ZDOTDIR", &home)
         .env("SCREENDIR", runtime)
         .env("SCREENRC", "/dev/null")
         .env("TERM", "xterm-256color")
@@ -2813,6 +2886,7 @@ fn run_screen_null_with_home<'a>(
         .env("SCREENDIR", runtime)
         .env_remove("SCREENRC")
         .env("HOME", home)
+        .env("ZDOTDIR", home)
         .env("TERM", "xterm-256color")
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
@@ -2862,9 +2936,12 @@ fn run_screen_null_in_dir_with_screenrc<'a>(
     args: impl IntoIterator<Item = &'a OsStr>,
     timeout: Duration,
 ) -> io::Result<ExitStatus> {
+    let home = ensure_test_home(runtime);
     let mut child = Command::new(executable)
         .args(args)
         .current_dir(current_dir)
+        .env("HOME", &home)
+        .env("ZDOTDIR", &home)
         .env("SCREENDIR", runtime)
         .env("SCREENRC", screenrc)
         .env("TERM", "xterm-256color")
@@ -2889,6 +2966,12 @@ fn run_screen_null_in_dir_with_screenrc<'a>(
         }
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn ensure_test_home(runtime: &Path) -> PathBuf {
+    let home = runtime.join("home");
+    let _ = fs::create_dir_all(&home);
+    home
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {

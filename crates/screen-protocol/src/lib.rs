@@ -28,7 +28,7 @@ pub enum Message {
     HelloAck,
     Shutdown,
     ShutdownAck,
-    Attach,
+    Attach(Option<Vec<u8>>),
     Detach,
     PtyInput(Vec<u8>),
     PtyOutput(Vec<u8>),
@@ -167,6 +167,8 @@ pub enum Message {
     CopyModePaste(Vec<u8>),
     /// Copy mode cursor position broadcast: (line_index, column, total_lines).
     CopyModeCursor(u32, u16, u32),
+    /// Daemon requests the client to provide a password for attach.
+    PasswordChallenge,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,6 +180,14 @@ pub struct WindowInfoMsg {
 }
 
 impl Message {
+    /// Serialize this message into a byte buffer (header + payload).
+    /// Useful for non-blocking I/O where writes may be partial.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, ProtocolError> {
+        let mut buf = Vec::with_capacity(HEADER_LEN + 256);
+        self.write_to(&mut buf)?;
+        Ok(buf)
+    }
+
     pub fn write_to(&self, writer: &mut impl Write) -> Result<(), ProtocolError> {
         let child_status_payload;
         let resize_payload;
@@ -211,7 +221,7 @@ impl Message {
             Self::HelloAck => (MessageKind::HelloAck, &[][..]),
             Self::Shutdown => (MessageKind::Shutdown, &[][..]),
             Self::ShutdownAck => (MessageKind::ShutdownAck, &[][..]),
-            Self::Attach => (MessageKind::Attach, &[][..]),
+            Self::Attach(password) => (MessageKind::Attach, password.as_deref().unwrap_or(&[])),
             Self::Detach => (MessageKind::Detach, &[][..]),
             Self::NextWindow => (MessageKind::NextWindow, &[][..]),
             Self::PrevWindow => (MessageKind::PrevWindow, &[][..]),
@@ -436,6 +446,7 @@ impl Message {
                     checked_payload(&copy_cursor_payload)?,
                 )
             }
+            Self::PasswordChallenge => (MessageKind::PasswordChallenge, &[][..]),
         };
 
         writer.write_all(&MAGIC).map_err(ProtocolError::Io)?;
@@ -477,7 +488,11 @@ impl Message {
             MessageKind::HelloAck if payload.is_empty() => Ok(Self::HelloAck),
             MessageKind::Shutdown if payload.is_empty() => Ok(Self::Shutdown),
             MessageKind::ShutdownAck if payload.is_empty() => Ok(Self::ShutdownAck),
-            MessageKind::Attach if payload.is_empty() => Ok(Self::Attach),
+            MessageKind::Attach => Ok(Self::Attach(if payload.is_empty() {
+                None
+            } else {
+                Some(payload.to_vec())
+            })),
             MessageKind::Detach if payload.is_empty() => Ok(Self::Detach),
             MessageKind::NextWindow if payload.is_empty() => Ok(Self::NextWindow),
             MessageKind::PrevWindow if payload.is_empty() => Ok(Self::PrevWindow),
@@ -648,6 +663,7 @@ impl Message {
                 let total = u32::from_be_bytes([payload[6], payload[7], payload[8], payload[9]]);
                 Ok(Self::CopyModeCursor(line, col, total))
             }
+            MessageKind::PasswordChallenge => Ok(Self::PasswordChallenge),
             _ => Err(ProtocolError::UnexpectedPayload {
                 kind: kind as u8,
                 len: payload.len(),
@@ -728,6 +744,7 @@ enum MessageKind {
     SplitHorizontal = 65,
     Suspend = 66,
     BindingsUpdate = 67,
+    PasswordChallenge = 68,
 }
 
 impl TryFrom<u8> for MessageKind {
@@ -799,6 +816,10 @@ impl TryFrom<u8> for MessageKind {
             62 => Ok(Self::CopyModePaste),
             63 => Ok(Self::CopyModeCursor),
             64 => Ok(Self::CaptionLine),
+            65 => Ok(Self::SplitHorizontal),
+            66 => Ok(Self::Suspend),
+            67 => Ok(Self::BindingsUpdate),
+            68 => Ok(Self::PasswordChallenge),
             255 => Ok(Self::Error),
             value => Err(ProtocolError::UnknownMessage(value)),
         }
@@ -1216,5 +1237,397 @@ mod tests {
             Message::read_from(&mut bytes.as_slice()),
             Err(ProtocolError::UnexpectedPayload { .. })
         ));
+    }
+
+    // ------------------------------------------------------------------
+    // Round-trip tests for specific message types
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn attach_round_trips() {
+        // None case
+        let msg = Message::Attach(None);
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+
+        // Some password
+        let msg = Message::Attach(Some(b"p4ss".to_vec()));
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn next_prev_window_round_trips() {
+        for msg in &[
+            Message::NextWindow,
+            Message::PrevWindow,
+            Message::OtherWindow,
+        ] {
+            let mut buf = Vec::new();
+            msg.write_to(&mut buf).unwrap();
+            assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), *msg);
+        }
+    }
+
+    #[test]
+    fn window_created_round_trips() {
+        let msg = Message::WindowCreated { id: 42, number: 1 };
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn window_selected_round_trips() {
+        let msg = Message::WindowSelected { number: 3 };
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn window_exited_round_trips() {
+        let msg = Message::WindowExited { id: 42, number: 1 };
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn window_list_round_trips() {
+        let msg = Message::WindowList(vec![
+            WindowInfoMsg {
+                number: 0,
+                flags: b'*',
+                title: b"bash".to_vec(),
+                group: None,
+            },
+            WindowInfoMsg {
+                number: 1,
+                flags: b'-',
+                title: b"top".to_vec(),
+                group: Some(b"g1".to_vec()),
+            },
+        ]);
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn window_title_round_trips() {
+        let msg = Message::WindowTitle {
+            number: 2,
+            title: b"my win".to_vec(),
+        };
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn copy_mode_data_round_trips() {
+        let msg = Message::CopyModeData(vec![b"line1".to_vec(), b"line2".to_vec()]);
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn bindings_update_round_trips() {
+        let msg =
+            Message::BindingsUpdate(vec![(b'c', b"screen 1".to_vec()), (b'n', b"next".to_vec())]);
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn region_layout_round_trips() {
+        let msg = Message::RegionLayout(vec![(0, 0, 12, 0, 80, true), (1, 12, 12, 0, 80, false)]);
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn hardstatus_line_round_trips() {
+        let msg = Message::HardstatusLine(b"Hello world".to_vec());
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn caption_line_round_trips() {
+        let msg = Message::CaptionLine(b"caption".to_vec());
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn echo_round_trips() {
+        let msg = Message::Echo(b"hi".to_vec());
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn register_round_trips() {
+        let msg = Message::Register {
+            name: b'a',
+            data: b"data".to_vec(),
+        };
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn search_result_round_trips() {
+        let msg = Message::SearchResult(vec![10, 20, 30]);
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn at_window_round_trips() {
+        let msg = Message::AtWindow(1, b"select 2".to_vec());
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn hardcopy_round_trips() {
+        let msg = Message::Hardcopy(0, b"/tmp/hc".to_vec());
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
+    }
+
+    #[test]
+    fn encode_decode_all_message_types() {
+        // Build a representative list of every message variant
+        let messages: Vec<Message> = vec![
+            Message::Hello,
+            Message::HelloAck,
+            Message::Shutdown,
+            Message::ShutdownAck,
+            Message::Attach(None),
+            Message::Attach(Some(b"pw".to_vec())),
+            Message::Detach,
+            Message::PtyInput(b"in".to_vec()),
+            Message::PtyOutput(b"out".to_vec()),
+            Message::ChildExited(0),
+            Message::ChildExited(127),
+            Message::Resize {
+                columns: 80,
+                rows: 24,
+            },
+            Message::Error(b"err".to_vec()),
+            Message::CreateWindow {
+                program: b"/bin/sh".to_vec(),
+                args: vec![],
+            },
+            Message::CreateWindow {
+                program: b"/bin/ls".to_vec(),
+                args: vec![b"-la".to_vec()],
+            },
+            Message::WindowCreated { id: 1, number: 0 },
+            Message::SelectWindow { number: 2 },
+            Message::WindowSelected { number: 2 },
+            Message::KillWindow { number: 1 },
+            Message::WindowExited { id: 1, number: 0 },
+            Message::WindowList(vec![]),
+            Message::WindowList(vec![WindowInfoMsg {
+                number: 0,
+                flags: 0,
+                title: vec![],
+                group: None,
+            }]),
+            Message::NextWindow,
+            Message::PrevWindow,
+            Message::WindowTitle {
+                number: 0,
+                title: b"t".to_vec(),
+            },
+            Message::CopyModeRequest,
+            Message::CopyModeData(vec![]),
+            Message::CopyModeData(vec![b"a".to_vec()]),
+            Message::PasteRequest(b"p".to_vec()),
+            Message::HardstatusLine(b"hs".to_vec()),
+            Message::CaptionLine(b"cl".to_vec()),
+            Message::RenumberWindow { number: 5 },
+            Message::Redisplay,
+            Message::RemoveWindow { number: 3 },
+            Message::WipeDeadWindows,
+            Message::Echo(b"e".to_vec()),
+            Message::LogToggle { enable: true },
+            Message::LogToggle { enable: false },
+            Message::LogFile(b"log.txt".to_vec()),
+            Message::OtherWindow,
+            Message::MonitorToggle { enable: true },
+            Message::MonitorToggle { enable: false },
+            Message::Activity(b"act".to_vec()),
+            Message::Silence { seconds: 15 },
+            Message::Bell(b"bell".to_vec()),
+            Message::WrapToggle { enable: true },
+            Message::ReadBuf,
+            Message::WriteBuf(b"buf".to_vec()),
+            Message::RemoveBuf,
+            Message::Register {
+                name: b'x',
+                data: vec![],
+            },
+            Message::FlowToggle { enable: true },
+            Message::Xoff,
+            Message::Xon,
+            Message::BreakSignal { ms: 250 },
+            Message::WindowInfo(b"info".to_vec()),
+            Message::SearchHistory(b"pat".to_vec()),
+            Message::SearchResult(vec![]),
+            Message::SearchResult(vec![1, 2, 3]),
+            Message::Command(b"cmd".to_vec()),
+            Message::Hardcopy(0, vec![]),
+            Message::Hardcopy(1, b"path".to_vec()),
+            Message::AtWindow(0, vec![]),
+            Message::AtWindow(2, b"stuff".to_vec()),
+            Message::SplitVertical,
+            Message::SplitHorizontal,
+            Message::RemoveRegion,
+            Message::OnlyWindow,
+            Message::FocusNext,
+            Message::FocusPrev,
+            Message::ResizeRegion(0),
+            Message::ResizeRegion(5),
+            Message::RegionLayout(vec![]),
+            Message::RegionLayout(vec![(0, 0, 24, 0, 80, true)]),
+            Message::CopyModeMove(5),
+            Message::CopyModeMove(-5),
+            Message::CopyModeMark,
+            Message::CopyModeCopy,
+            Message::CopyModePaste(vec![]),
+            Message::CopyModePaste(b"text".to_vec()),
+            Message::CopyModeCursor(0, 0, 0),
+            Message::CopyModeCursor(42, 10, 100),
+            Message::PasswordChallenge,
+            // Boolean toggles with both values
+            Message::Suspend,
+            Message::BindingsUpdate(vec![]),
+            Message::BindingsUpdate(vec![(b'a', b"cmd".to_vec())]),
+        ];
+        for (i, msg) in messages.iter().enumerate() {
+            let mut buf = Vec::new();
+            msg.write_to(&mut buf)
+                .unwrap_or_else(|e| panic!("encode msg[{i}] {msg:?}: {e}"));
+            let decoded = Message::read_from(&mut buf.as_slice())
+                .unwrap_or_else(|e| panic!("decode msg[{i}] {msg:?}: {e}"));
+            assert_eq!(decoded, *msg, "mismatch at index {i}");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Error handling tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn rejects_payload_too_large() {
+        let oversized = vec![0u8; MAX_PAYLOAD_LEN as usize + 1];
+        let msg = Message::PtyInput(oversized);
+        let mut buf = Vec::new();
+        assert!(matches!(
+            msg.write_to(&mut buf),
+            Err(ProtocolError::PayloadTooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_version() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MAGIC);
+        bytes.extend_from_slice(&99u16.to_be_bytes());
+        bytes.push(MessageKind::Hello as u8);
+        bytes.extend_from_slice(&0u32.to_be_bytes());
+        assert!(matches!(
+            Message::read_from(&mut bytes.as_slice()),
+            Err(ProtocolError::UnsupportedVersion(99))
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_message_kind() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MAGIC);
+        bytes.extend_from_slice(&PROTOCOL_VERSION.to_be_bytes());
+        bytes.push(0); // unknown kind
+        bytes.extend_from_slice(&0u32.to_be_bytes());
+        assert!(matches!(
+            Message::read_from(&mut bytes.as_slice()),
+            Err(ProtocolError::UnknownMessage(0))
+        ));
+    }
+
+    #[test]
+    fn empty_payload_for_fixed_messages_works() {
+        // Only message kinds whose decode arm includes `if payload.is_empty()`
+        // reject a non-empty payload.  These are the strict-but-correct ones.
+        let strict: &[(u8, Message)] = &[
+            (MessageKind::Hello as u8, Message::Hello),
+            (MessageKind::HelloAck as u8, Message::HelloAck),
+            (MessageKind::Shutdown as u8, Message::Shutdown),
+            (MessageKind::ShutdownAck as u8, Message::ShutdownAck),
+            (MessageKind::Detach as u8, Message::Detach),
+            (MessageKind::NextWindow as u8, Message::NextWindow),
+            (MessageKind::PrevWindow as u8, Message::PrevWindow),
+            (MessageKind::Redisplay as u8, Message::Redisplay),
+            (MessageKind::WipeDeadWindows as u8, Message::WipeDeadWindows),
+            (MessageKind::OtherWindow as u8, Message::OtherWindow),
+            (MessageKind::ReadBuf as u8, Message::ReadBuf),
+            (MessageKind::RemoveBuf as u8, Message::RemoveBuf),
+            (MessageKind::Xoff as u8, Message::Xoff),
+            (MessageKind::Xon as u8, Message::Xon),
+        ];
+        for (kind_byte, msg) in strict {
+            // With empty payload -> success
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&MAGIC);
+            bytes.extend_from_slice(&PROTOCOL_VERSION.to_be_bytes());
+            bytes.push(*kind_byte);
+            bytes.extend_from_slice(&0u32.to_be_bytes());
+            let decoded = Message::read_from(&mut bytes.as_slice())
+                .unwrap_or_else(|e| panic!("decode kind {kind_byte}: {e}"));
+            assert_eq!(decoded, *msg, "kind {kind_byte} mismatch");
+
+            // With non-empty payload -> rejection
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&MAGIC);
+            bytes.extend_from_slice(&PROTOCOL_VERSION.to_be_bytes());
+            bytes.push(*kind_byte);
+            bytes.extend_from_slice(&1u32.to_be_bytes());
+            bytes.push(b'x');
+            assert!(
+                matches!(
+                    Message::read_from(&mut bytes.as_slice()),
+                    Err(ProtocolError::UnexpectedPayload { .. })
+                ),
+                "kind {kind_byte} should reject payload"
+            );
+        }
+    }
+
+    #[test]
+    fn large_payload_round_trips() {
+        let payload = vec![b'X'; MAX_PAYLOAD_LEN as usize];
+        let msg = Message::PtyOutput(payload.clone());
+        let mut buf = Vec::new();
+        msg.write_to(&mut buf).unwrap();
+        let decoded = Message::read_from(&mut buf.as_slice()).unwrap();
+        assert_eq!(decoded, Message::PtyOutput(payload));
     }
 }

@@ -10,6 +10,8 @@ members = [
     "crates/screen-config",
     "crates/screen-platform",
     "crates/screen-testkit",
+    "crates/screen-nix-interop",
+    "fuzz",
 ]
 
 [workspace.package]

@@ -14,6 +14,7 @@ screen-config = { path = "../screen-config", version = "0.0.1" }
 screen-daemon = { path = "../screen-daemon", version = "0.0.1" }
 screen-platform = { path = "../screen-platform", version = "0.0.1" }
 screen-protocol = { path = "../screen-protocol", version = "0.0.1" }
+screen-nix-interop = { path = "../screen-nix-interop", version = "0.0.1" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

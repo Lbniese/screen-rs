@@ -240,3 +240,187 @@ fn join_reader(
         }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+    use std::os::unix::process::ExitStatusExt;
+    use std::time::SystemTime;
+
+    #[test]
+    fn test_create_executable() {
+        let exe = ScreenExecutable::new("/usr/bin/true");
+        assert_eq!(exe.path, PathBuf::from("/usr/bin/true"));
+    }
+
+    #[test]
+    fn test_create_executable_from_string() {
+        let exe = ScreenExecutable::new("/bin/sh");
+        assert_eq!(exe.path, PathBuf::from("/bin/sh"));
+    }
+
+    #[test]
+    fn test_default_reference_path_defaults() {
+        // Without SCREEN_REFERENCE env, should default to "screen"
+        let path = default_reference_path();
+        assert_eq!(path, PathBuf::from("screen"));
+    }
+
+    #[test]
+    fn test_test_error_display_io() {
+        let err = TestError::Io {
+            path: PathBuf::from("/fake/path"),
+            source: io::Error::new(io::ErrorKind::NotFound, "file not found"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("/fake/path"), "msg={msg}");
+        assert!(msg.contains("file not found"), "msg={msg}");
+    }
+
+    #[test]
+    fn test_test_error_display_spawn() {
+        let err = TestError::Spawn {
+            path: PathBuf::from("/bin/fake"),
+            source: io::Error::new(io::ErrorKind::NotFound, "no such file"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("/bin/fake"), "msg={msg}");
+    }
+
+    #[test]
+    fn test_test_error_display_wait() {
+        let err = TestError::Wait {
+            path: PathBuf::from("/bin/sleep"),
+            source: io::Error::other("interrupted"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("/bin/sleep"), "msg={msg}");
+    }
+
+    #[test]
+    fn test_test_error_display_missing_pipe() {
+        let err = TestError::MissingPipe {
+            stream: "stdout",
+            path: PathBuf::from("/bin/test"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("stdout"), "msg={msg}");
+    }
+
+    #[test]
+    fn test_test_error_display_read() {
+        let err = TestError::Read {
+            stream: "stderr",
+            path: PathBuf::from("/bin/test"),
+            source: io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("stderr"), "msg={msg}");
+    }
+
+    #[test]
+    fn test_test_error_display_reader_panicked() {
+        let err = TestError::ReaderPanicked {
+            stream: "stdout",
+            path: PathBuf::from("/bin/test"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("stdout"), "msg={msg}");
+    }
+
+    #[test]
+    fn test_test_error_display_timeout() {
+        let err = TestError::Timeout {
+            path: PathBuf::from("/bin/sleep"),
+            args: vec![OsString::from("100")],
+            timeout: Duration::from_secs(1),
+            stdout: vec![],
+            stderr: vec![],
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("timed out"), "msg={msg}");
+    }
+
+    #[test]
+    fn test_test_error_display_runtime() {
+        let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "denied");
+        let dir_err = screen_platform::RuntimeDirectoryError::Io {
+            path: PathBuf::from("/run/screen"),
+            source: io_err,
+        };
+        let err = TestError::Runtime(dir_err);
+        let msg = err.to_string();
+        assert!(
+            !msg.is_empty(),
+            "Runtime error Display should produce output"
+        );
+    }
+
+    #[test]
+    fn test_test_error_display_clock() {
+        let err = TestError::Clock(
+            SystemTime::UNIX_EPOCH
+                .duration_since(SystemTime::now())
+                .unwrap_err(),
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("clock"), "msg={msg}");
+    }
+
+    #[test]
+    fn test_test_error_source_io() {
+        let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "denied");
+        let err = TestError::Io {
+            path: PathBuf::from("/x"),
+            source: io_err,
+        };
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn test_test_error_source_spawn() {
+        let err = TestError::Spawn {
+            path: PathBuf::from("/x"),
+            source: io::Error::new(io::ErrorKind::NotFound, "x"),
+        };
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn test_test_error_source_timeout() {
+        let err = TestError::Timeout {
+            path: PathBuf::from("/x"),
+            args: vec![],
+            timeout: Duration::from_secs(1),
+            stdout: vec![],
+            stderr: vec![],
+        };
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn test_test_error_source_missing_pipe() {
+        let err = TestError::MissingPipe {
+            stream: "out",
+            path: PathBuf::from("/x"),
+        };
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn test_command_result_debug() {
+        let result = CommandResult {
+            status: ExitStatus::from_raw(0),
+            stdout: b"hello".to_vec(),
+            stderr: b"".to_vec(),
+        };
+        let debug = format!("{result:?}");
+        // Debug output shows "ExitStatus(unix_wait_status(0))" and bytes as integers
+        assert!(debug.contains("CommandResult"), "debug={debug}");
+        assert!(debug.contains("ExitStatus"), "debug={debug}");
+        // bytes 104='h', 101='e', 108='l', 108='l', 111='o'
+        assert!(debug.contains("104"), "debug={debug}");
+        assert!(debug.contains("111"), "debug={debug}");
+    }
+}

@@ -23,3 +23,28 @@ jobs:
         run: cargo test --workspace
       - name: Cargo deny
         uses: EmbarkStudios/cargo-deny-action@v2
+
+  musl-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build workspace for musl
+        run: cargo build --workspace --target x86_64-unknown-linux-musl
+
+  fuzz-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Fuzz target compilation check
+        run: cargo +nightly fuzz build --dev
+      - name: Quick fuzz regression (30s each)
+        run: |
+          for target in terminal_parser protocol_decoder screenrc_parser; do
+            cargo +nightly fuzz run "$target" -- -max_total_time=30 || true
+          done

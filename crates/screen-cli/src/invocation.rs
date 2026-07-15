@@ -907,4 +907,211 @@ mod tests {
             Err(ParseError::UnknownOption { .. })
         ));
     }
+
+    #[test]
+    fn parses_dm_s_lower_with_attached_name() {
+        assert_eq!(
+            parse_invocation(["-dmSdemo", "sh"]),
+            Ok(Invocation::CreateDetached(CreateDetachedOptions {
+                session_name: Some(os("demo")),
+                config_file: None,
+                term: None,
+                shell: None,
+                logging: false,
+                mode: DetachedMode::LowerDetach,
+                command: vec![os("sh")],
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_dm_s_upper_with_attached_name() {
+        assert_eq!(
+            parse_invocation(["-DmSdemo", "sh"]),
+            Ok(Invocation::CreateDetached(CreateDetachedOptions {
+                session_name: Some(os("demo")),
+                config_file: None,
+                term: None,
+                shell: None,
+                logging: false,
+                mode: DetachedMode::UpperDetach,
+                command: vec![os("sh")],
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_l_flag() {
+        assert_eq!(
+            parse_invocation(["-L", "-S", "demo", "-d", "-m", "sh"]),
+            Ok(Invocation::CreateDetached(CreateDetachedOptions {
+                session_name: Some(os("demo")),
+                config_file: None,
+                term: None,
+                shell: None,
+                logging: true,
+                mode: DetachedMode::LowerDetach,
+                command: vec![os("sh")],
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_t_flag() {
+        assert_eq!(
+            parse_invocation(["-T", "screen-256color", "-S", "demo", "-d", "-m", "sh"]),
+            Ok(Invocation::CreateDetached(CreateDetachedOptions {
+                session_name: Some(os("demo")),
+                config_file: None,
+                term: Some(os("screen-256color")),
+                shell: None,
+                logging: false,
+                mode: DetachedMode::LowerDetach,
+                command: vec![os("sh")],
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_c_flag() {
+        assert_eq!(
+            parse_invocation(["-c", "/path/to/screenrc", "-S", "demo", "-d", "-m"]),
+            Ok(Invocation::CreateDetached(CreateDetachedOptions {
+                session_name: Some(os("demo")),
+                config_file: Some(os("/path/to/screenrc")),
+                term: None,
+                shell: None,
+                logging: false,
+                mode: DetachedMode::LowerDetach,
+                command: Vec::new(),
+            }))
+        );
+    }
+
+    #[test]
+    fn rejects_d_and_d_together() {
+        assert!(matches!(
+            parse_invocation(["-d", "-D"]),
+            Err(ParseError::ConflictingOptions { .. })
+        ));
+        assert!(matches!(
+            parse_invocation(["-D", "-d"]),
+            Err(ParseError::ConflictingOptions { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_r_with_s_conflict() {
+        assert!(matches!(
+            parse_invocation(["-r", "demo", "-S", "other"]),
+            Err(ParseError::ConflictingOptions { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_x_and_q_together() {
+        // -X and -Q both consume remaining args and break the loop,
+        // so only the first one encountered takes effect. Verify -X wins.
+        let parsed = parse_invocation(["-S", "demo", "-X", "stuff", "-Q", "windows"]);
+        assert!(
+            matches!(&parsed, Ok(Invocation::RemoteCommand(opts)) if opts.command == [os("stuff"), os("-Q"), os("windows")]),
+            "expected RemoteCommand with -Q consumed as arg, got {parsed:?}"
+        );
+
+        // Verify -Q wins when it appears first
+        let parsed = parse_invocation(["-S", "demo", "-Q", "windows", "-X", "stuff"]);
+        assert!(
+            matches!(&parsed, Ok(Invocation::Query(opts)) if opts.command == [os("windows"), os("-X"), os("stuff")]),
+            "expected Query with -X consumed as arg, got {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_help_with_operations() {
+        assert!(matches!(
+            parse_invocation(["--help", "-ls"]),
+            Err(ParseError::ConflictingOptions { .. })
+        ));
+        assert!(matches!(
+            parse_invocation(["-h", "-S", "demo"]),
+            Err(ParseError::ConflictingOptions { .. })
+        ));
+        assert!(matches!(
+            parse_invocation(["--version", "-wipe"]),
+            Err(ParseError::ConflictingOptions { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_empty_args() {
+        let no_args: [&str; 0] = [];
+        assert_eq!(
+            parse_invocation(no_args),
+            Ok(Invocation::Create(CreateOptions {
+                session_name: None,
+                config_file: None,
+                term: None,
+                shell: None,
+                logging: false,
+                force_new: false,
+                command: Vec::new(),
+            }))
+        );
+    }
+
+    #[test]
+    fn rejects_empty_session_name() {
+        assert!(matches!(
+            parse_invocation(["-S", ""]),
+            Err(ParseError::MissingValue { option: "-S" })
+        ));
+    }
+
+    #[test]
+    fn parses_list_with_session_match() {
+        assert_eq!(
+            parse_invocation(["-ls", "my_session"]),
+            Ok(Invocation::List(ListOptions {
+                session_match: Some(os("my_session")),
+            }))
+        );
+        assert_eq!(
+            parse_invocation(["-list", "other"]),
+            Ok(Invocation::List(ListOptions {
+                session_match: Some(os("other")),
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_wipe_with_session_match() {
+        assert_eq!(
+            parse_invocation(["-wipe", "my_session"]),
+            Ok(Invocation::Wipe(WipeOptions {
+                session_match: Some(os("my_session")),
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_detach() {
+        assert_eq!(
+            parse_invocation(["-d"]),
+            Ok(Invocation::Detach(DetachOptions {
+                session: None,
+                power_detach: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_power_detach() {
+        assert_eq!(
+            parse_invocation(["-D"]),
+            Ok(Invocation::Detach(DetachOptions {
+                session: None,
+                power_detach: true,
+            }))
+        );
+    }
 }

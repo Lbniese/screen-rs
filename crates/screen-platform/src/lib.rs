@@ -2,6 +2,7 @@
 compile_error!("screen-rs currently supports Unix targets only");
 
 pub mod runtime;
+pub mod utmp;
 
 pub use runtime::{
     RuntimeDirectory, RuntimeDirectoryError, SessionNameError, SocketPathStatus,

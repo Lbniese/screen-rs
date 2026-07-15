@@ -268,6 +268,13 @@ fn start_session_daemon(options: SessionStartOptions) -> Result<OsString, String
         .arg("--screen-rs-daemon")
         .arg(runtime.path())
         .arg(&session_name);
+    // Forward parent-pid for self-termination if the environment requests it
+    // (used by the test harness to prevent zombie daemons).
+    if let Ok(ppid) = env::var("SCREEN_RS_PARENT_PID")
+        && !ppid.is_empty()
+    {
+        command.arg("--parent-pid").arg(&ppid);
+    }
     if let Some(term) = &term {
         command.arg("--term").arg(term);
     }
@@ -504,6 +511,7 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
     let mut default_wrap = None;
     let mut default_silence = None;
     let mut auto_nuke = None;
+    let mut config_parent_pid: Option<u32> = None;
     let mut config_file: Option<PathBuf> = None;
     while let Some(option) = args.get(index) {
         if option == OsStr::new("--config") {
@@ -588,6 +596,18 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
         } else if option == OsStr::new("--autonuke") {
             auto_nuke = Some(true);
             index += 1;
+        } else if option == OsStr::new("--parent-pid") {
+            index += 1;
+            let value = args.get(index).ok_or_else(|| {
+                "internal daemon mode --parent-pid requires an argument before --".to_owned()
+            })?;
+            let pid = value
+                .to_str()
+                .ok_or_else(|| "parent-pid value is not valid UTF-8".to_owned())?
+                .parse::<u32>()
+                .map_err(|e| format!("invalid parent-pid: {e}"))?;
+            config_parent_pid = Some(pid);
+            index += 1;
         } else {
             break;
         }
@@ -617,6 +637,7 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
     config.default_wrap = default_wrap;
     config.default_silence = default_silence;
     config.auto_nuke = auto_nuke;
+    config.parent_pid = config_parent_pid;
     // Load startup windows and additional config from config file
     if let Some(ref cfg_path) = config_file
         && let Ok(screenrc) = screen_config::parse_config_file(cfg_path)
@@ -888,9 +909,29 @@ fn attach_socket(
         Message::HelloAck => {}
         message => return Err(format!("unexpected daemon response: {message:?}")),
     }
-    Message::Attach
+    Message::Attach(None)
         .write_to(&mut stream)
         .map_err(|error| error.to_string())?;
+
+    // Check if the daemon requires a password.
+    let first_message = loop {
+        match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+            Message::PasswordChallenge => {
+                // Daemon requires a password — prompt the user.
+                let password = prompt_password()?;
+                Message::Attach(Some(password.into_bytes()))
+                    .write_to(&mut stream)
+                    .map_err(|error| error.to_string())?;
+            }
+            Message::Error(bytes) => {
+                return Err(String::from_utf8_lossy(&bytes).into_owned());
+            }
+            // First real data (e.g. PtyOutput with grid redraw) — preserve it
+            // so the snapshot/interactive path can handle it exactly once.
+            message => break Some(message),
+        }
+    };
+
     if let Some((columns, rows)) = terminal_size() {
         Message::Resize { columns, rows }
             .write_to(&mut stream)
@@ -898,7 +939,7 @@ fn attach_socket(
     }
 
     if !stdin_is_tty() {
-        return attach_snapshot(stream);
+        return attach_snapshot(stream, first_message);
     }
 
     let _raw_terminal = RawTerminalGuard::enter_stdin()?;
@@ -913,6 +954,7 @@ fn attach_socket(
     let mut input_stream = stream
         .try_clone()
         .map_err(|error| format!("failed to clone client socket: {error}"))?;
+    let detach_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
     // Shared paste buffer between the stdin thread and the main loop
     let paste_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let paste_clone = Arc::clone(&paste_buffer);
@@ -922,6 +964,7 @@ fn attach_socket(
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     // Clone for the stdin dispatch thread
     let runtime_bindings_thread = runtime_bindings.clone();
+    let detach_requested_thread = detach_requested.clone();
 
     let binding_map: std::collections::HashMap<u8, Vec<Vec<u8>>> = bindings
         .into_iter()
@@ -954,6 +997,7 @@ fn attach_socket(
         loop {
             match stdin.read(&mut buffer) {
                 Ok(0) => {
+                    detach_requested_thread.store(true, std::sync::atomic::Ordering::Relaxed);
                     let _ = Message::Detach.write_to(&mut input_stream);
                     break;
                 }
@@ -1001,6 +1045,8 @@ fn attach_socket(
                             }
                             match *byte {
                                 b'd' => {
+                                    detach_requested_thread
+                                        .store(true, std::sync::atomic::Ordering::Relaxed);
                                     let _ = Message::Detach.write_to(&mut input_stream);
                                     return;
                                 }
@@ -1277,6 +1323,8 @@ fn attach_socket(
                                 }
                                 b'D' => {
                                     // Power detach (C-a D D) — second D
+                                    detach_requested_thread
+                                        .store(true, std::sync::atomic::Ordering::Relaxed);
                                     let _ = Message::Detach.write_to(&mut input_stream);
                                 }
                                 b'\x08' | b'\x7f' => {
@@ -1328,6 +1376,7 @@ fn attach_socket(
                     }
                 }
                 Err(_error) => {
+                    detach_requested_thread.store(true, std::sync::atomic::Ordering::Relaxed);
                     let _ = Message::Detach.write_to(&mut input_stream);
                     break;
                 }
@@ -1335,7 +1384,25 @@ fn attach_socket(
         }
     });
 
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .map_err(|error| error.to_string())?;
+
     let mut stdout = io::stdout().lock();
+    if let Some(initial) = first_message {
+        match initial {
+            Message::PtyOutput(bytes) => {
+                stdout
+                    .write_all(&bytes)
+                    .map_err(|error| error.to_string())?;
+                stdout.flush().map_err(|error| error.to_string())?;
+            }
+            Message::ChildExited(code) => return Ok(normalize_exit_code(code)),
+            Message::Error(bytes) => return Err(String::from_utf8_lossy(&bytes).into_owned()),
+            Message::Detach => return Ok(0),
+            _ => {}
+        }
+    }
     // Print startup banner
     let banner = format!(
         "screen-rs {}  (C-a ? for help)\r\n",
@@ -1359,17 +1426,17 @@ fn attach_socket(
                 .write_to(&mut stream);
             }
         }
-        match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
-            Message::PtyOutput(bytes) => {
+        match Message::read_from(&mut stream) {
+            Ok(Message::PtyOutput(bytes)) => {
                 stdout
                     .write_all(&bytes)
                     .map_err(|error| error.to_string())?;
                 stdout.flush().map_err(|error| error.to_string())?;
             }
-            Message::ChildExited(code) => return Ok(normalize_exit_code(code)),
-            Message::Error(bytes) => return Err(String::from_utf8_lossy(&bytes).into_owned()),
-            Message::Detach => return Ok(0),
-            Message::Suspend => {
+            Ok(Message::ChildExited(code)) => return Ok(normalize_exit_code(code)),
+            Ok(Message::Error(bytes)) => return Err(String::from_utf8_lossy(&bytes).into_owned()),
+            Ok(Message::Detach) => return Ok(0),
+            Ok(Message::Suspend) => {
                 // Send SIGTSTP to ourselves (like GNU Screen C-a z)
                 #[cfg(unix)]
                 unsafe {
@@ -1377,20 +1444,20 @@ fn attach_socket(
                 }
                 // After SIGCONT resumes us, continue the event loop
             }
-            Message::BindingsUpdate(list) => {
+            Ok(Message::BindingsUpdate(list)) => {
                 let mut map = runtime_bindings.lock().unwrap();
                 map.clear();
                 for (key, cmd) in list {
                     map.insert(key, cmd);
                 }
             }
-            Message::CopyModeData(lines) => {
+            Ok(Message::CopyModeData(lines)) => {
                 // Enter local copy mode with scrollback lines
                 if let Some(selected) = copy_mode_navigate(&lines, &mut stream) {
                     *paste_buffer.lock().unwrap() = selected;
                 }
             }
-            Message::HardstatusLine(line) => {
+            Ok(Message::HardstatusLine(line)) => {
                 // Render hardstatus at bottom of terminal
                 let (cols, rows) = terminal_size().unwrap_or((80, 24));
                 let mut status = line.clone();
@@ -1408,7 +1475,7 @@ fn attach_socket(
                 stdout.write_all(&seq).ok();
                 stdout.flush().ok();
             }
-            Message::CaptionLine(line) => {
+            Ok(Message::CaptionLine(line)) => {
                 // Render caption above hardstatus (at row-1)
                 let (cols, rows) = terminal_size().unwrap_or((80, 24));
                 let caption_row = if rows > 1 { rows - 1 } else { rows };
@@ -1427,15 +1494,15 @@ fn attach_socket(
                 stdout.write_all(&seq).ok();
                 stdout.flush().ok();
             }
-            Message::WindowSelected { number } => {
+            Ok(Message::WindowSelected { number }) => {
                 // Window was selected, continue reading
                 let _ = number;
             }
-            Message::WindowExited { number, .. } => {
+            Ok(Message::WindowExited { number, .. }) => {
                 // A window exited, continue reading
                 let _ = number;
             }
-            Message::WindowList(list) => {
+            Ok(Message::WindowList(list)) => {
                 // Display window list to stderr (like GNU Screen does)
                 let mut stderr = io::stderr().lock();
                 let _ = writeln!(stderr, "Num Name       Flags");
@@ -1446,13 +1513,13 @@ fn attach_socket(
                     let _ = writeln!(stderr, "{:<3} {:<10} {}{}", w.number, marker, dead, title);
                 }
             }
-            Message::Activity(msg) => {
+            Ok(Message::Activity(msg)) => {
                 // Display activity notification on the message line
                 let mut stderr = io::stderr().lock();
                 let text = String::from_utf8_lossy(&msg);
                 let _ = writeln!(stderr, "\r\n{}", text);
             }
-            Message::Bell(_msg) => {
+            Ok(Message::Bell(_msg)) => {
                 if visual_bell.load(std::sync::atomic::Ordering::Relaxed) {
                     // Visual bell: brief screen flash via DECSCNM (reverse video)
                     let _ = stdout.write_all(b"\x1b[?5h");
@@ -1466,18 +1533,26 @@ fn attach_socket(
                     let _ = stdout.flush();
                 }
             }
-            Message::WindowInfo(info) => {
+            Ok(Message::WindowInfo(info)) => {
                 // Display window info
                 let mut stderr = io::stderr().lock();
                 let text = String::from_utf8_lossy(&info);
                 let _ = writeln!(stderr, "{}", text);
             }
-            Message::SearchResult(matches) => {
+            Ok(Message::SearchResult(matches)) => {
                 // Display search results — for now just print count
                 let mut stderr = io::stderr().lock();
                 let _ = writeln!(stderr, "Found {} match(es)", matches.len());
             }
-            _message => {}
+            Ok(_message) => {}
+            Err(screen_protocol::ProtocolError::Io(error))
+                if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+            {
+                if detach_requested.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Ok(0);
+                }
+            }
+            Err(error) => return Err(error.to_string()),
         }
     }
 }
@@ -1641,7 +1716,32 @@ fn remote_command(options: RemoteCommandOptions) -> Result<(), String> {
         let runtime = open_or_create_runtime()?;
         let socket_path = resolve_session_socket(&runtime, options.session)?;
         send_sessionname(socket_path, &options.command[1..])
-    } else if command == OsStr::new("msgwait")
+    } else if command == OsStr::new("activity")
+        || command == OsStr::new("altscreen")
+        || command == OsStr::new("clear")
+        || command == OsStr::new("debug")
+        || command == OsStr::new("defhstatus")
+        || command == OsStr::new("defobuflimit")
+        || command == OsStr::new("defscrollback")
+        || command == OsStr::new("defutf8")
+        || command == OsStr::new("defwrap")
+        || command == OsStr::new("defflow")
+        || command == OsStr::new("defsilence")
+        || command == OsStr::new("defautonuke")
+        || command == OsStr::new("escape")
+        || command == OsStr::new("fit")
+        || command == OsStr::new("hstatus")
+        || command == OsStr::new("idle")
+        || command == OsStr::new("login")
+        || command == OsStr::new("mousetrack")
+        || command == OsStr::new("pow_break")
+        || command == OsStr::new("pow_detach")
+        || command == OsStr::new("readreg")
+        || command == OsStr::new("reset")
+        || command == OsStr::new("unbind")
+        || command == OsStr::new("unbindkey")
+        || command == OsStr::new("writereg")
+        || command == OsStr::new("msgwait")
         || command == OsStr::new("msgminwait")
         || command == OsStr::new("maxwin")
         || command == OsStr::new("zombie")
@@ -2537,8 +2637,26 @@ fn send_control_message(socket_path: PathBuf, message: Message) -> Result<(), St
     Ok(())
 }
 
-fn attach_snapshot(mut stream: UnixStream) -> Result<u8, String> {
+fn attach_snapshot(mut stream: UnixStream, first_message: Option<Message>) -> Result<u8, String> {
     let mut stdout = io::stdout().lock();
+
+    if let Some(message) = first_message {
+        match message {
+            Message::PtyOutput(bytes) => {
+                stdout
+                    .write_all(&bytes)
+                    .map_err(|error| error.to_string())?;
+                stdout.flush().map_err(|error| error.to_string())?;
+                let _ = Message::Detach.write_to(&mut stream);
+                return Ok(0);
+            }
+            Message::ChildExited(code) => return Ok(normalize_exit_code(code)),
+            Message::Error(bytes) => return Err(String::from_utf8_lossy(&bytes).into_owned()),
+            Message::Detach => return Ok(0),
+            _ => {}
+        }
+    }
+
     loop {
         match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
             Message::PtyOutput(bytes) => {
@@ -2551,6 +2669,7 @@ fn attach_snapshot(mut stream: UnixStream) -> Result<u8, String> {
             }
             Message::ChildExited(code) => return Ok(normalize_exit_code(code)),
             Message::Error(bytes) => return Err(String::from_utf8_lossy(&bytes).into_owned()),
+            Message::Detach => return Ok(0),
             _message => {}
         }
     }
@@ -2562,7 +2681,47 @@ fn list_sessions(options: ListOptions) -> Result<(), String> {
         session_socket_entries(&runtime)?,
         options.session_match.as_deref(),
     );
+
+    // Also discover GNU Screen sessions via nix-interop for cross-detection.
+    let nix_sessions = screen_nix_interop::discovery::discover_sessions();
+    let nix_filtered: Vec<_> = nix_sessions
+        .into_iter()
+        .filter(|s| {
+            options
+                .session_match
+                .as_deref()
+                .is_none_or(|requested| s.name.contains(&*requested.to_string_lossy()))
+        })
+        .collect();
+
+    // Merge: show screen-rs sessions from our runtime, plus any GNU Screen
+    // sessions discovered via nix-interop that aren't already listed.
+    let gnu_only: Vec<_> = nix_filtered
+        .iter()
+        .filter(|s| {
+            s.kind == screen_nix_interop::ScreenKind::GnuScreen
+                && !entries.iter().any(|entry| {
+                    session_name_matches(entry.name.as_os_str(), OsStr::new(&s.name))
+                })
+        })
+        .collect();
+
     print_session_listing(runtime.path(), &entries);
+
+    // Print GNU Screen sessions discovered via interop.
+    if !gnu_only.is_empty() {
+        println!();
+        println!("GNU Screen sessions:");
+        for session in &gnu_only {
+            let state = if session.attached {
+                "Attached"
+            } else {
+                "Detached"
+            };
+            println!("\t{}\t(pid {})\t({state})", session.name, session.pid);
+        }
+    }
+
     Ok(())
 }
 
@@ -3285,6 +3444,63 @@ fn stdin_is_tty() -> bool {
     // SAFETY: `isatty` only observes the validity/type of file descriptor 0 and
     // does not take ownership of it or write through pointers.
     unsafe { isatty(0) == 1 }
+}
+
+/// Prompt the user for a password without echoing it to the terminal.
+fn prompt_password() -> Result<String, String> {
+    use std::io::{self, BufRead, Write};
+    eprint!("Screen password: ");
+    io::stderr().flush().map_err(|e| e.to_string())?;
+    // Turn off echo if stdin is a terminal.
+    #[cfg(unix)]
+    let _guard = TerminalEchoGuard::disable();
+    let mut line = String::new();
+    io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| format!("failed to read password: {e}"))?;
+    eprintln!();
+    Ok(line.trim_end_matches('\n').to_owned())
+}
+
+/// RAII guard that disables terminal echo and restores it on drop.
+#[cfg(unix)]
+struct TerminalEchoGuard {
+    original: Option<libc::termios>,
+}
+
+#[cfg(unix)]
+impl TerminalEchoGuard {
+    fn disable() -> Self {
+        // SAFETY: tcgetattr/tcsetattr operate on fd 0 (stdin). We snapshot the
+        // current termios and restore it on drop if the calls succeed.
+        unsafe {
+            let mut term: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(0, &mut term) == 0 {
+                let original = term;
+                term.c_lflag &= !libc::ECHO;
+                let _ = libc::tcsetattr(0, libc::TCSANOW, &term);
+                Self {
+                    original: Some(original),
+                }
+            } else {
+                Self { original: None }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TerminalEchoGuard {
+    fn drop(&mut self) {
+        if let Some(term) = &self.original {
+            // SAFETY: `term` was captured from `tcgetattr` on fd 0 and is being
+            // restored back to the same fd during guard drop.
+            unsafe {
+                let _ = libc::tcsetattr(0, libc::TCSANOW, term);
+            }
+        }
+    }
 }
 
 fn terminal_size() -> Option<(u16, u16)> {

@@ -1,0 +1,38 @@
+[package]
+name = "screen-rs-fuzz"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.96"
+license = "GPL-3.0-or-later"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+screen-terminal = { path = "../crates/screen-terminal" }
+screen-protocol = { path = "../crates/screen-protocol" }
+screen-config = { path = "../crates/screen-config" }
+
+[[bin]]
+name = "terminal_parser"
+path = "fuzz_targets/terminal_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_decoder"
+path = "fuzz_targets/protocol_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "screenrc_parser"
+path = "fuzz_targets/screenrc_parser.rs"
+test = false
+doc = false
+bench = false

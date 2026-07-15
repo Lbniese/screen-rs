@@ -1,12 +1,13 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use screen_testkit::{PtySize, PtyTestProcess};
 
@@ -397,6 +398,149 @@ fn attach_or_create_creates_missing_session() {
 }
 
 #[test]
+fn password_protected_attach_prompts_and_accepts_password() {
+    let candidate = PathBuf::from(env!("CARGO_BIN_EXE_screen-rs"));
+    let temp = TempDir::new("password-attach");
+    if !unix_socket_bind_allowed(temp.path()) {
+        eprintln!("skipping password attach test: Unix socket bind is not permitted");
+        return;
+    }
+
+    let session_name = "pwattach";
+    let _guard = SessionGuard {
+        candidate: candidate.clone(),
+        runtime: temp.path().to_owned(),
+        session_name: session_name.to_owned(),
+    };
+
+    let start = run_screen(
+        &candidate,
+        temp.path(),
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-d"),
+            OsStr::new("-m"),
+            OsStr::new("sh"),
+            OsStr::new("-c"),
+            OsStr::new("printf ready; while :; do sleep 1; done"),
+        ],
+        Duration::from_secs(3),
+    )
+    .expect("start command should return");
+    assert_success("start", &start);
+    assert!(
+        wait_until_session_present(&candidate, temp.path(), session_name),
+        "session should become visible before setting password"
+    );
+    set_session_password(temp.path(), session_name, b"secret");
+
+    let denied = run_screen_with_input(
+        &candidate,
+        temp.path(),
+        [OsStr::new("-r"), OsStr::new(session_name)],
+        b"wrong\n",
+        Duration::from_secs(3),
+    )
+    .expect("attach with wrong password should return");
+    assert!(
+        !denied.status.success(),
+        "attach with wrong password unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&denied.stdout),
+        String::from_utf8_lossy(&denied.stderr)
+    );
+    assert_contains("wrong-password stderr", &denied.stderr, b"Screen password: ");
+    assert_contains(
+        "wrong-password stderr",
+        &denied.stderr,
+        b"incorrect password",
+    );
+
+    let attach = run_screen_with_input(
+        &candidate,
+        temp.path(),
+        [OsStr::new("-r"), OsStr::new(session_name)],
+        b"secret\n",
+        Duration::from_secs(3),
+    )
+    .expect("attach with correct password should return");
+    assert_success("attach with password", &attach);
+    assert_contains("attach stderr", &attach.stderr, b"Screen password: ");
+    assert_contains("attach stdout", &attach.stdout, b"ready");
+
+    let quit = run_screen(
+        &candidate,
+        temp.path(),
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-X"),
+            OsStr::new("quit"),
+        ],
+        Duration::from_secs(3),
+    )
+    .expect("quit command should return");
+    assert_success("quit", &quit);
+    wait_until_no_sessions(&candidate, temp.path());
+}
+
+#[test]
+fn detached_session_exits_when_parent_pid_disappears() {
+    let candidate = PathBuf::from(env!("CARGO_BIN_EXE_screen-rs"));
+    let temp = TempDir::new("parent-pid");
+    if !unix_socket_bind_allowed(temp.path()) {
+        eprintln!("skipping parent-pid cleanup test: Unix socket bind is not permitted");
+        return;
+    }
+
+    let session_name = "parent-pid";
+    let _guard = SessionGuard {
+        candidate: candidate.clone(),
+        runtime: temp.path().to_owned(),
+        session_name: session_name.to_owned(),
+    };
+
+    let mut parent = Command::new("sh")
+        .arg("-c")
+        .arg("sleep 30")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn parent pid sentinel");
+
+    let start = run_screen_with_env(
+        &candidate,
+        temp.path(),
+        [
+            OsStr::new("-S"),
+            OsStr::new(session_name),
+            OsStr::new("-d"),
+            OsStr::new("-m"),
+            OsStr::new("sh"),
+            OsStr::new("-c"),
+            OsStr::new("while :; do sleep 1; done"),
+        ],
+        &[(
+            OsString::from("SCREEN_RS_PARENT_PID"),
+            OsString::from(parent.id().to_string()),
+        )],
+        Duration::from_secs(3),
+    )
+    .expect("start command should return");
+    assert_success("start", &start);
+    assert!(
+        wait_until_session_present(&candidate, temp.path(), session_name),
+        "session should become visible before parent exits"
+    );
+
+    let _ = parent.kill();
+    let _ = parent.wait();
+
+    wait_until_no_sessions(&candidate, temp.path());
+}
+
+#[test]
 fn attach_or_create_attaches_existing_session() {
     let candidate = PathBuf::from(env!("CARGO_BIN_EXE_screen-rs"));
     let temp = TempDir::new("attach-or-create-existing");
@@ -487,16 +631,52 @@ struct TempDir {
     path: PathBuf,
 }
 
+static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+thread_local! {
+    static TEST_LOCK_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TEST_LOCK_GUARD: std::cell::RefCell<Option<std::sync::MutexGuard<'static, ()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn acquire_test_lock() {
+    TEST_LOCK_DEPTH.with(|depth| {
+        let current = depth.get();
+        if current == 0 {
+            TEST_LOCK_GUARD.with(|guard| {
+                *guard.borrow_mut() = Some(
+                    TEST_MUTEX
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                );
+            });
+        }
+        depth.set(current + 1);
+    });
+}
+
+fn release_test_lock() {
+    TEST_LOCK_DEPTH.with(|depth| {
+        let current = depth.get();
+        if current <= 1 {
+            TEST_LOCK_GUARD.with(|guard| {
+                guard.borrow_mut().take();
+            });
+            depth.set(0);
+        } else {
+            depth.set(current - 1);
+        }
+    });
+}
+
 impl TempDir {
     fn new(name: &str) -> Self {
+        acquire_test_lock();
         // Keep path short enough to fit Unix socket paths within SUN_LEN
         // (104 bytes on macOS). Socket path = <temp>/<dir>/<pid>.<session>
         let short = if name.len() > 12 { &name[..12] } else { name };
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos();
-        let path = temp_base().join(format!("sr-{short}-{nanos}"));
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = temp_base().join(format!("sr-{short}-{}-{seq}", std::process::id()));
         fs::create_dir(&path).unwrap_or_else(|error| {
             panic!(
                 "failed to create temporary directory {}: {error}",
@@ -514,6 +694,7 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
+        release_test_lock();
     }
 }
 
@@ -545,16 +726,64 @@ fn run_screen<'a>(
     args: impl IntoIterator<Item = &'a OsStr>,
     timeout: Duration,
 ) -> io::Result<CommandOutput> {
-    let mut child = Command::new(candidate)
+    run_screen_custom(candidate, runtime, args, &[], None, timeout)
+}
+
+fn run_screen_with_input<'a>(
+    candidate: &Path,
+    runtime: &Path,
+    args: impl IntoIterator<Item = &'a OsStr>,
+    input: &[u8],
+    timeout: Duration,
+) -> io::Result<CommandOutput> {
+    run_screen_custom(candidate, runtime, args, &[], Some(input), timeout)
+}
+
+fn run_screen_with_env<'a>(
+    candidate: &Path,
+    runtime: &Path,
+    args: impl IntoIterator<Item = &'a OsStr>,
+    extra_envs: &[(OsString, OsString)],
+    timeout: Duration,
+) -> io::Result<CommandOutput> {
+    run_screen_custom(candidate, runtime, args, extra_envs, None, timeout)
+}
+
+fn run_screen_custom<'a>(
+    candidate: &Path,
+    runtime: &Path,
+    args: impl IntoIterator<Item = &'a OsStr>,
+    extra_envs: &[(OsString, OsString)],
+    input: Option<&[u8]>,
+    timeout: Duration,
+) -> io::Result<CommandOutput> {
+    let home = ensure_test_home(runtime);
+    let mut command = Command::new(candidate);
+    command
         .args(args)
+        .env("HOME", &home)
+        .env("ZDOTDIR", &home)
         .env("SCREENDIR", runtime)
         .env("SCREENRC", "/dev/null")
         .env("TERM", "xterm-256color")
         .env("LC_ALL", "C")
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    for (key, value) in extra_envs {
+        command.env(key, value);
+    }
+
+    let mut child = command.spawn()?;
+    if let Some(input) = input {
+        let mut stdin = child.stdin.take().expect("stdin pipe should exist");
+        stdin.write_all(input)?;
+        drop(stdin);
+    }
 
     let mut stdout = child.stdout.take().expect("stdout pipe should exist");
     let mut stderr = child.stderr.take().expect("stderr pipe should exist");
@@ -590,6 +819,12 @@ fn run_screen<'a>(
     })
 }
 
+fn ensure_test_home(runtime: &Path) -> PathBuf {
+    let home = runtime.join("home");
+    let _ = fs::create_dir_all(&home);
+    home
+}
+
 fn read_all(reader: &mut impl Read) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
@@ -615,6 +850,67 @@ fn assert_contains(label: &str, haystack: &[u8], needle: &[u8]) {
         String::from_utf8_lossy(needle),
         String::from_utf8_lossy(haystack)
     );
+}
+
+fn wait_until_session_present(candidate: &Path, runtime: &Path, session_name: &str) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let output = run_screen(
+            candidate,
+            runtime,
+            [OsStr::new("-ls")],
+            Duration::from_secs(1),
+        )
+        .expect("list command should return while waiting for session");
+
+        if output
+            .stdout
+            .windows(session_name.len())
+            .any(|window| window == session_name.as_bytes())
+        {
+            return true;
+        }
+
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn session_socket_path(runtime: &Path, session_name: &str) -> Option<PathBuf> {
+    let suffix = format!(".{session_name}");
+    let entries = fs::read_dir(runtime).ok()?;
+    for entry in entries.flatten() {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .ends_with(suffix.as_str())
+        {
+            return Some(entry.path());
+        }
+    }
+    None
+}
+
+fn set_session_password(runtime: &Path, session_name: &str, password: &[u8]) {
+    let socket_path = session_socket_path(runtime, session_name)
+        .unwrap_or_else(|| panic!("missing socket for session {session_name}"));
+    let mut stream = UnixStream::connect(&socket_path)
+        .unwrap_or_else(|error| panic!("connect {}: {error}", socket_path.display()));
+    screen_protocol::Message::Hello
+        .write_to(&mut stream)
+        .expect("write hello");
+    match screen_protocol::Message::read_from(&mut stream).expect("read hello ack") {
+        screen_protocol::Message::HelloAck => {}
+        message => panic!("unexpected hello response: {message:?}"),
+    }
+
+    let mut command = b"password ".to_vec();
+    command.extend_from_slice(password);
+    screen_protocol::Message::Command(command)
+        .write_to(&mut stream)
+        .expect("write password command");
 }
 
 fn wait_until_no_sessions(candidate: &Path, runtime: &Path) {
