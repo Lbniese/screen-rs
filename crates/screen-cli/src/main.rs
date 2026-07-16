@@ -1089,8 +1089,12 @@ fn attach_socket(
                                     return;
                                 }
                                 b'c' => {
+                                    let program = env::var_os("SHELL")
+                                        .unwrap_or_else(|| OsString::from("/bin/sh"))
+                                        .as_bytes()
+                                        .to_vec();
                                     let _ = Message::CreateWindow {
-                                        program: Vec::new(),
+                                        program,
                                         args: Vec::new(),
                                     }
                                     .write_to(&mut input_stream);
@@ -1846,9 +1850,9 @@ fn query_command(options: QueryOptions) -> ExitCode {
         return ExitCode::from(1);
     };
 
-    if command == OsStr::new("sessionname") {
-        // GNU Screen reports this non-queryable command on stdout and exits 1.
-        println!("sessionname command cannot be queried.");
+    if is_known_non_queryable_command(command) {
+        // GNU Screen reports known-but-non-queryable commands on stdout and exits 1.
+        println!("{} command cannot be queried.", command.to_string_lossy());
         return ExitCode::from(1);
     }
 
@@ -1913,6 +1917,13 @@ fn query_command(options: QueryOptions) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+fn is_known_non_queryable_command(command: &OsStr) -> bool {
+    matches!(
+        command.as_bytes(),
+        b"sessionname" | b"stuff" | b"kill" | b"quit" | b"screen" | b"help" | b"license"
+    )
 }
 
 #[derive(Clone, Copy)]

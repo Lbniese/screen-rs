@@ -16,6 +16,7 @@ tests=(
   differential_x_commands
   differential_query
   differential_prefix
+  differential_multi_window
   differential_fullscreen
 )
 
@@ -50,7 +51,7 @@ for version in "${versions[@]}"; do
     raw="compatibility/reports/raw/${test_name}-screen-${version}.txt"
     set +e
     SCREEN_REFERENCE="$reference" SCREEN_CANDIDATE="$candidate" \
-      cargo test -p screen-cli --test "$test_name" -- --nocapture \
+      cargo test -p screen-cli --test "$test_name" -- --nocapture --test-threads=1 \
       >"$raw" 2>&1
     status=$?
     set -e

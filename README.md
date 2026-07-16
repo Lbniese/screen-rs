@@ -5,7 +5,8 @@ versioned compatibility with GNU Screen.
 
 This repository does not claim full GNU Screen compatibility yet. The current
 binary is named `screen-rs`; compatibility is developed and verified
-incrementally through versioned feature manifests and differential tests.
+incrementally through versioned feature manifests, manifest summaries, tracked
+work items, and differential tests.
 
 ## Build
 
