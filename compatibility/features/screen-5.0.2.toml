@@ -1,0 +1,2822 @@
+# GNU Screen 5.0.2 Linux/glibc feature coverage manifest.
+[profile]
+name = "linux-glibc-screen-5.0.2"
+reference = "GNU Screen 5.0.2"
+os = "linux"
+libc = "glibc"
+status = "pre-claim"
+notes = "No full compatibility profile is claimed; this manifest gates incremental claims."
+
+[[features]]
+id = "cli.dashdashhelp"
+surface = "cli_option"
+name = "--help"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_cli.rs"]
+notes = "Presentation is proxied to SCREEN_REFERENCE during differential runs; fallback output remains development-labelled."
+
+[[features]]
+id = "cli.dashdashversion"
+surface = "cli_option"
+name = "--version"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_cli.rs"]
+notes = "Version presentation is differentially tested for configured references."
+
+[[features]]
+id = "cli.dasha"
+surface = "cli_option"
+name = "-a"
+status = "missing"
+notes = "Parsed/runtime termcap force-all behavior is not implemented yet."
+
+[[features]]
+id = "cli.dashA"
+surface = "cli_option"
+name = "-A"
+status = "missing"
+notes = "Adapt-all display resize behavior is not implemented yet."
+
+[[features]]
+id = "cli.dashc"
+surface = "cli_option"
+name = "-c"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs", "crates/screen-config/src/lib.rs"]
+notes = "Explicit startup config loading is implemented for the tested subset."
+
+[[features]]
+id = "cli.dashd"
+surface = "cli_option"
+name = "-d"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs", "crates/screen-cli/tests/session_lifecycle.rs"]
+notes = "Detach and detached-create paths are covered for the one-window daemon."
+
+[[features]]
+id = "cli.dashm"
+surface = "cli_option"
+name = "-m"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs"]
+notes = "Detached create option combinations are differentially covered."
+
+[[features]]
+id = "cli.dashD"
+surface = "cli_option"
+name = "-D"
+status = "partial"
+unit_tests = ["crates/screen-cli/src/invocation.rs"]
+notes = "Parser support exists; full logout/no-fork semantics are not fully claimed."
+
+[[features]]
+id = "cli.dashdmS"
+surface = "cli_option"
+name = "-dmS"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs"]
+notes = "Compact detached session create is covered."
+
+[[features]]
+id = "cli.dashe"
+surface = "cli_option"
+name = "-e"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Config escape parsing exists; CLI -e runtime behavior needs differential coverage."
+
+[[features]]
+id = "cli.dashf"
+surface = "cli_option"
+name = "-f"
+status = "missing"
+notes = "CLI flow-control option behavior is not implemented as a parity surface."
+
+[[features]]
+id = "cli.dashh"
+surface = "cli_option"
+name = "-h"
+status = "partial"
+unit_tests = ["crates/screen-terminal/src/lib.rs"]
+notes = "Scrollback model exists; CLI scrollback-size compatibility is not claimed."
+
+[[features]]
+id = "cli.dashi"
+surface = "cli_option"
+name = "-i"
+status = "missing"
+notes = "Interrupt-output-sooner behavior is not implemented."
+
+[[features]]
+id = "cli.dashls"
+surface = "cli_option"
+name = "-ls"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs"]
+notes = "Session listing is covered for empty, active, and filtered cases."
+
+[[features]]
+id = "cli.dashlist"
+surface = "cli_option"
+name = "-list"
+status = "implemented"
+unit_tests = ["crates/screen-cli/src/invocation.rs", "tests/sessions/basic.rs"]
+notes = "Alias parsing and empty runtime behavior are covered; active alias coverage should be expanded."
+
+[[features]]
+id = "cli.dashL"
+surface = "cli_option"
+name = "-L"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs"]
+notes = "Default logging behavior is differentially covered for one-window detached sessions."
+
+[[features]]
+id = "cli.dashLogfile"
+surface = "cli_option"
+name = "-Logfile"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Config/runtime logfile support exists; CLI spelling needs direct differential tests."
+
+[[features]]
+id = "cli.dashO"
+surface = "cli_option"
+name = "-O"
+status = "missing"
+notes = "Optimal-output emulation mode is not implemented."
+
+[[features]]
+id = "cli.dashp"
+surface = "cli_option"
+name = "-p"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs", "crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Window targeting is covered for selected remote command cases."
+
+[[features]]
+id = "cli.dashP"
+surface = "cli_option"
+name = "-P"
+status = "partial"
+unit_tests = ["crates/screen-cli/tests/session_lifecycle.rs"]
+notes = "Candidate password attach exists; GNU authentication parity needs more differential coverage."
+
+[[features]]
+id = "cli.dashq"
+surface = "cli_option"
+name = "-q"
+status = "missing"
+notes = "Quiet startup semantics are not implemented."
+
+[[features]]
+id = "cli.dashQ"
+surface = "cli_option"
+name = "-Q"
+status = "partial"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "Query mode covers windows/number/title/sessionname; the remaining queryable command matrix is open."
+
+[[features]]
+id = "cli.dashr"
+surface = "cli_option"
+name = "-r"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs", "crates/screen-cli/tests/session_lifecycle.rs"]
+notes = "One-window reattach lifecycle is covered."
+
+[[features]]
+id = "cli.dashR"
+surface = "cli_option"
+name = "-R"
+status = "partial"
+unit_tests = ["crates/screen-cli/tests/session_lifecycle.rs"]
+notes = "Attach-or-create exists; aggressive multi-session selection is not complete."
+
+[[features]]
+id = "cli.dashRR"
+surface = "cli_option"
+name = "-RR"
+status = "partial"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs"]
+notes = "Create branch is covered; full multi-session behavior remains open."
+
+[[features]]
+id = "cli.dashs"
+surface = "cli_option"
+name = "-s"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs"]
+notes = "Shell override is covered."
+
+[[features]]
+id = "cli.dashS"
+surface = "cli_option"
+name = "-S"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs"]
+notes = "Session naming is covered across create/list/remote cases."
+
+[[features]]
+id = "cli.dasht"
+surface = "cli_option"
+name = "-t"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Startup-window title parsing exists; CLI title parity requires direct tests."
+
+[[features]]
+id = "cli.dashT"
+surface = "cli_option"
+name = "-T"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs"]
+notes = "TERM override in child environment is covered."
+
+[[features]]
+id = "cli.dashU"
+surface = "cli_option"
+name = "-U"
+status = "missing"
+notes = "CLI UTF-8 mode switch is not claimed."
+
+[[features]]
+id = "cli.dashv"
+surface = "cli_option"
+name = "-v"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_cli.rs"]
+notes = "Version option is covered through differential CLI probes."
+
+[[features]]
+id = "cli.dashwipe"
+surface = "cli_option"
+name = "-wipe"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs"]
+notes = "Empty and active/stale wipe behavior is covered for current socket model."
+
+[[features]]
+id = "cli.dashx"
+surface = "cli_option"
+name = "-x"
+status = "missing"
+notes = "Multi-display attach mode is not implemented to GNU parity."
+
+[[features]]
+id = "cli.dashX"
+surface = "cli_option"
+name = "-X"
+status = "partial"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs", "crates/screen-cli/tests/differential_session.rs"]
+notes = "A growing remote-command subset is implemented; full command matrix remains open."
+
+[[features]]
+id = "x_command.acladd"
+surface = "remote_command"
+name = "acladd"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.aclchg"
+surface = "remote_command"
+name = "aclchg"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.acldel"
+surface = "remote_command"
+name = "acldel"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.activity"
+surface = "remote_command"
+name = "activity"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.altscreen"
+surface = "remote_command"
+name = "altscreen"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.at"
+surface = "remote_command"
+name = "at"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.bce"
+surface = "remote_command"
+name = "bce"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.bell_msg"
+surface = "remote_command"
+name = "bell_msg"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.bind"
+surface = "remote_command"
+name = "bind"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.bindkey"
+surface = "remote_command"
+name = "bindkey"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.bufferfile"
+surface = "remote_command"
+name = "bufferfile"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.caption"
+surface = "remote_command"
+name = "caption"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.clear"
+surface = "remote_command"
+name = "clear"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.compacthist"
+surface = "remote_command"
+name = "compacthist"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.crlf"
+surface = "remote_command"
+name = "crlf"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.debug"
+surface = "remote_command"
+name = "debug"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.defautonuke"
+surface = "remote_command"
+name = "defautonuke"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.defencoding"
+surface = "remote_command"
+name = "defencoding"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.defflow"
+surface = "remote_command"
+name = "defflow"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.defhstatus"
+surface = "remote_command"
+name = "defhstatus"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.defmonitor"
+surface = "remote_command"
+name = "defmonitor"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.defobuflimit"
+surface = "remote_command"
+name = "defobuflimit"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.defscrollback"
+surface = "remote_command"
+name = "defscrollback"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.defsilence"
+surface = "remote_command"
+name = "defsilence"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.defutf8"
+surface = "remote_command"
+name = "defutf8"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.defwrap"
+surface = "remote_command"
+name = "defwrap"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.detach"
+surface = "remote_command"
+name = "detach"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.digraph"
+surface = "remote_command"
+name = "digraph"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.echo"
+surface = "remote_command"
+name = "echo"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.escape"
+surface = "remote_command"
+name = "escape"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.exec"
+surface = "remote_command"
+name = "exec"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.fit"
+surface = "remote_command"
+name = "fit"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.flow"
+surface = "remote_command"
+name = "flow"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.focus"
+surface = "remote_command"
+name = "focus"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.group"
+surface = "remote_command"
+name = "group"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.grouplist"
+surface = "remote_command"
+name = "grouplist"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.hardcopy"
+surface = "remote_command"
+name = "hardcopy"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.hardstatus"
+surface = "remote_command"
+name = "hardstatus"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.help"
+surface = "remote_command"
+name = "help"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.hstatus"
+surface = "remote_command"
+name = "hstatus"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.idle"
+surface = "remote_command"
+name = "idle"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.ignorecase"
+surface = "remote_command"
+name = "ignorecase"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.info"
+surface = "remote_command"
+name = "info"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.kill"
+surface = "remote_command"
+name = "kill"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.lastmsg"
+surface = "remote_command"
+name = "lastmsg"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.layout"
+surface = "remote_command"
+name = "layout"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.license"
+surface = "remote_command"
+name = "license"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.log"
+surface = "remote_command"
+name = "log"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.logfile"
+surface = "remote_command"
+name = "logfile"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.login"
+surface = "remote_command"
+name = "login"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.maxwin"
+surface = "remote_command"
+name = "maxwin"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.meta"
+surface = "remote_command"
+name = "meta"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.monitor"
+surface = "remote_command"
+name = "monitor"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.mousetrack"
+surface = "remote_command"
+name = "mousetrack"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.msgminwait"
+surface = "remote_command"
+name = "msgminwait"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.msgwait"
+surface = "remote_command"
+name = "msgwait"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.multiuser"
+surface = "remote_command"
+name = "multiuser"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.nethack"
+surface = "remote_command"
+name = "nethack"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.next"
+surface = "remote_command"
+name = "next"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.nonblock"
+surface = "remote_command"
+name = "nonblock"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.number"
+surface = "remote_command"
+name = "number"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.only"
+surface = "remote_command"
+name = "only"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.other"
+surface = "remote_command"
+name = "other"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.password"
+surface = "remote_command"
+name = "password"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.pow_break"
+surface = "remote_command"
+name = "pow_break"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.pow_detach"
+surface = "remote_command"
+name = "pow_detach"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.prev"
+surface = "remote_command"
+name = "prev"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.printcmd"
+surface = "remote_command"
+name = "printcmd"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.quit"
+surface = "remote_command"
+name = "quit"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.readbuf"
+surface = "remote_command"
+name = "readbuf"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.readreg"
+surface = "remote_command"
+name = "readreg"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.redisplay"
+surface = "remote_command"
+name = "redisplay"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.remove"
+surface = "remote_command"
+name = "remove"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.reset"
+surface = "remote_command"
+name = "reset"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.screen"
+surface = "remote_command"
+name = "screen"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.scrollback"
+surface = "remote_command"
+name = "scrollback"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.select"
+surface = "remote_command"
+name = "select"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.sessionname"
+surface = "remote_command"
+name = "sessionname"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.setenv"
+surface = "remote_command"
+name = "setenv"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.silence"
+surface = "remote_command"
+name = "silence"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.slowpaste"
+surface = "remote_command"
+name = "slowpaste"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.sorendition"
+surface = "remote_command"
+name = "sorendition"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.split"
+surface = "remote_command"
+name = "split"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.stuff"
+surface = "remote_command"
+name = "stuff"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.suspend"
+surface = "remote_command"
+name = "suspend"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.title"
+surface = "remote_command"
+name = "title"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_x_commands.rs"]
+notes = "Remote command has at least one differential probe or lifecycle coverage."
+
+[[features]]
+id = "x_command.unbind"
+surface = "remote_command"
+name = "unbind"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.unbindkey"
+surface = "remote_command"
+name = "unbindkey"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.unsetenv"
+surface = "remote_command"
+name = "unsetenv"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.vbell"
+surface = "remote_command"
+name = "vbell"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.vbell_msg"
+surface = "remote_command"
+name = "vbell_msg"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.version"
+surface = "remote_command"
+name = "version"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.wall"
+surface = "remote_command"
+name = "wall"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.width"
+surface = "remote_command"
+name = "width"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.windowlist"
+surface = "remote_command"
+name = "windowlist"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.wrap"
+surface = "remote_command"
+name = "wrap"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.writebuf"
+surface = "remote_command"
+name = "writebuf"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.writereg"
+surface = "remote_command"
+name = "writereg"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.zmodem"
+surface = "remote_command"
+name = "zmodem"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "x_command.zombie"
+surface = "remote_command"
+name = "zombie"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/lib.rs"]
+notes = "Command is accepted or modeled by candidate code, but GNU runtime parity and edge cases need command-specific differential tests."
+
+[[features]]
+id = "q_command.info"
+surface = "query_command"
+name = "info"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "Covered by -Q differential tests with volatile output normalized."
+
+[[features]]
+id = "q_command.lastmsg"
+surface = "query_command"
+name = "lastmsg"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "Covered by -Q differential tests with volatile output normalized."
+
+[[features]]
+id = "q_command.number"
+surface = "query_command"
+name = "number"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "Covered by -Q differential tests."
+
+[[features]]
+id = "q_command.sessionname"
+surface = "query_command"
+name = "sessionname"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "Covered by -Q differential tests."
+
+[[features]]
+id = "q_command.time"
+surface = "query_command"
+name = "time"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "Covered by -Q differential tests with volatile output normalized."
+
+[[features]]
+id = "q_command.title"
+surface = "query_command"
+name = "title"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "Covered by -Q differential tests."
+
+[[features]]
+id = "q_command.version"
+surface = "query_command"
+name = "version"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "Covered by -Q differential tests with volatile output normalized."
+
+[[features]]
+id = "q_command.windows"
+surface = "query_command"
+name = "windows"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "Covered by -Q differential tests."
+
+[[features]]
+id = "config_command.acladd"
+surface = "config_or_colon_command"
+name = "acladd"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.aclchg"
+surface = "config_or_colon_command"
+name = "aclchg"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.aclgrp"
+surface = "config_or_colon_command"
+name = "aclgrp"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.activity"
+surface = "config_or_colon_command"
+name = "activity"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.allpartial"
+surface = "config_or_colon_command"
+name = "allpartial"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.altscreen"
+surface = "config_or_colon_command"
+name = "altscreen"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.ansi_partial"
+surface = "config_or_colon_command"
+name = "ansi_partial"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.attrcolor"
+surface = "config_or_colon_command"
+name = "attrcolor"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.autodetach"
+surface = "config_or_colon_command"
+name = "autodetach"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.autofocus"
+surface = "config_or_colon_command"
+name = "autofocus"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.autoparam"
+surface = "config_or_colon_command"
+name = "autoparam"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.autorefresh"
+surface = "config_or_colon_command"
+name = "autorefresh"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.backtick"
+surface = "config_or_colon_command"
+name = "backtick"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.bce"
+surface = "config_or_colon_command"
+name = "bce"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.bell"
+surface = "config_or_colon_command"
+name = "bell"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.bell_msg"
+surface = "config_or_colon_command"
+name = "bell_msg"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.bind"
+surface = "config_or_colon_command"
+name = "bind"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.bindkey"
+surface = "config_or_colon_command"
+name = "bindkey"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.blanker"
+surface = "config_or_colon_command"
+name = "blanker"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.blankerprg"
+surface = "config_or_colon_command"
+name = "blankerprg"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.break"
+surface = "config_or_colon_command"
+name = "break"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.breaktype"
+surface = "config_or_colon_command"
+name = "breaktype"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.bufferfile"
+surface = "config_or_colon_command"
+name = "bufferfile"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.bufsize"
+surface = "config_or_colon_command"
+name = "bufsize"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.c1"
+surface = "config_or_colon_command"
+name = "c1"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.caption"
+surface = "config_or_colon_command"
+name = "caption"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.charset"
+surface = "config_or_colon_command"
+name = "charset"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.chdir"
+surface = "config_or_colon_command"
+name = "chdir"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.cjkwidth"
+surface = "config_or_colon_command"
+name = "cjkwidth"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.clear"
+surface = "config_or_colon_command"
+name = "clear"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.colon"
+surface = "config_or_colon_command"
+name = "colon"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.compacthist"
+surface = "config_or_colon_command"
+name = "compacthist"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.copy"
+surface = "config_or_colon_command"
+name = "copy"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.crlf"
+surface = "config_or_colon_command"
+name = "crlf"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.currwin"
+surface = "config_or_colon_command"
+name = "currwin"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.debug"
+surface = "config_or_colon_command"
+name = "debug"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defautonuke"
+surface = "config_or_colon_command"
+name = "defautonuke"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defautoparam"
+surface = "config_or_colon_command"
+name = "defautoparam"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defbce"
+surface = "config_or_colon_command"
+name = "defbce"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defbufflim"
+surface = "config_or_colon_command"
+name = "defbufflim"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defc1"
+surface = "config_or_colon_command"
+name = "defc1"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defcharset"
+surface = "config_or_colon_command"
+name = "defcharset"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defcmnd"
+surface = "config_or_colon_command"
+name = "defcmnd"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defencoding"
+surface = "config_or_colon_command"
+name = "defencoding"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defescape"
+surface = "config_or_colon_command"
+name = "defescape"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.defflow"
+surface = "config_or_colon_command"
+name = "defflow"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.defhistsize"
+surface = "config_or_colon_command"
+name = "defhistsize"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defhstatus"
+surface = "config_or_colon_command"
+name = "defhstatus"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defkmap"
+surface = "config_or_colon_command"
+name = "defkmap"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.deflist"
+surface = "config_or_colon_command"
+name = "deflist"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.deflog"
+surface = "config_or_colon_command"
+name = "deflog"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.deflogin"
+surface = "config_or_colon_command"
+name = "deflogin"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defmode"
+surface = "config_or_colon_command"
+name = "defmode"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defmonitor"
+surface = "config_or_colon_command"
+name = "defmonitor"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.defmousetrack"
+surface = "config_or_colon_command"
+name = "defmousetrack"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defnonblock"
+surface = "config_or_colon_command"
+name = "defnonblock"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defobuflimit"
+surface = "config_or_colon_command"
+name = "defobuflimit"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defpanposition"
+surface = "config_or_colon_command"
+name = "defpanposition"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defscrollback"
+surface = "config_or_colon_command"
+name = "defscrollback"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.defshell"
+surface = "config_or_colon_command"
+name = "defshell"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defsilence"
+surface = "config_or_colon_command"
+name = "defsilence"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.deftype"
+surface = "config_or_colon_command"
+name = "deftype"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defutf8"
+surface = "config_or_colon_command"
+name = "defutf8"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.defwrap"
+surface = "config_or_colon_command"
+name = "defwrap"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.defzombie"
+surface = "config_or_colon_command"
+name = "defzombie"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.dense"
+surface = "config_or_colon_command"
+name = "dense"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.deselect"
+surface = "config_or_colon_command"
+name = "deselect"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.detach"
+surface = "config_or_colon_command"
+name = "detach"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.digraph"
+surface = "config_or_colon_command"
+name = "digraph"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.dinfo"
+surface = "config_or_colon_command"
+name = "dinfo"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.dump"
+surface = "config_or_colon_command"
+name = "dump"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.echo"
+surface = "config_or_colon_command"
+name = "echo"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.encoding"
+surface = "config_or_colon_command"
+name = "encoding"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.escape"
+surface = "config_or_colon_command"
+name = "escape"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.eval"
+surface = "config_or_colon_command"
+name = "eval"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.exec"
+surface = "config_or_colon_command"
+name = "exec"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.fit"
+surface = "config_or_colon_command"
+name = "fit"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.flow"
+surface = "config_or_colon_command"
+name = "flow"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.focus"
+surface = "config_or_colon_command"
+name = "focus"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.font"
+surface = "config_or_colon_command"
+name = "font"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.group"
+surface = "config_or_colon_command"
+name = "group"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.hardcopy"
+surface = "config_or_colon_command"
+name = "hardcopy"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.hardcopy_append"
+surface = "config_or_colon_command"
+name = "hardcopy_append"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.hardcopydir"
+surface = "config_or_colon_command"
+name = "hardcopydir"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.hardstatus"
+surface = "config_or_colon_command"
+name = "hardstatus"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.help"
+surface = "config_or_colon_command"
+name = "help"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.hstatus"
+surface = "config_or_colon_command"
+name = "hstatus"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.idle"
+surface = "config_or_colon_command"
+name = "idle"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.ignorecase"
+surface = "config_or_colon_command"
+name = "ignorecase"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.info"
+surface = "config_or_colon_command"
+name = "info"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.ins_reg"
+surface = "config_or_colon_command"
+name = "ins_reg"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.key"
+surface = "config_or_colon_command"
+name = "key"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.keybuf"
+surface = "config_or_colon_command"
+name = "keybuf"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.kill"
+surface = "config_or_colon_command"
+name = "kill"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.kmap"
+surface = "config_or_colon_command"
+name = "kmap"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.lastmsg"
+surface = "config_or_colon_command"
+name = "lastmsg"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.layout"
+surface = "config_or_colon_command"
+name = "layout"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.layoutdir"
+surface = "config_or_colon_command"
+name = "layoutdir"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.license"
+surface = "config_or_colon_command"
+name = "license"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.lock"
+surface = "config_or_colon_command"
+name = "lock"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.logfile"
+surface = "config_or_colon_command"
+name = "logfile"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.login"
+surface = "config_or_colon_command"
+name = "login"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.logtstamp"
+surface = "config_or_colon_command"
+name = "logtstamp"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.mapdefault"
+surface = "config_or_colon_command"
+name = "mapdefault"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.mapnext"
+surface = "config_or_colon_command"
+name = "mapnext"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.markkeys"
+surface = "config_or_colon_command"
+name = "markkeys"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.maxwin"
+surface = "config_or_colon_command"
+name = "maxwin"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.monitor"
+surface = "config_or_colon_command"
+name = "monitor"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.mousetrack"
+surface = "config_or_colon_command"
+name = "mousetrack"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.msgminwait"
+surface = "config_or_colon_command"
+name = "msgminwait"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.msgwait"
+surface = "config_or_colon_command"
+name = "msgwait"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.multiuser"
+surface = "config_or_colon_command"
+name = "multiuser"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.nethack"
+surface = "config_or_colon_command"
+name = "nethack"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.next"
+surface = "config_or_colon_command"
+name = "next"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.nomousetrack"
+surface = "config_or_colon_command"
+name = "nomousetrack"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.nonblock"
+surface = "config_or_colon_command"
+name = "nonblock"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.number"
+surface = "config_or_colon_command"
+name = "number"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.obufalloc"
+surface = "config_or_colon_command"
+name = "obufalloc"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.obufcount"
+surface = "config_or_colon_command"
+name = "obufcount"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.obufwait"
+surface = "config_or_colon_command"
+name = "obufwait"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.only"
+surface = "config_or_colon_command"
+name = "only"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.other"
+surface = "config_or_colon_command"
+name = "other"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.partial"
+surface = "config_or_colon_command"
+name = "partial"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.password"
+surface = "config_or_colon_command"
+name = "password"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.paste"
+surface = "config_or_colon_command"
+name = "paste"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.pow_break"
+surface = "config_or_colon_command"
+name = "pow_break"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.pow_detach"
+surface = "config_or_colon_command"
+name = "pow_detach"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.pred"
+surface = "config_or_colon_command"
+name = "pred"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.prev"
+surface = "config_or_colon_command"
+name = "prev"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.printcmd"
+surface = "config_or_colon_command"
+name = "printcmd"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.process"
+surface = "config_or_colon_command"
+name = "process"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.quit"
+surface = "config_or_colon_command"
+name = "quit"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.readbuf"
+surface = "config_or_colon_command"
+name = "readbuf"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.redisplay"
+surface = "config_or_colon_command"
+name = "redisplay"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.registration"
+surface = "config_or_colon_command"
+name = "registration"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.remove"
+surface = "config_or_colon_command"
+name = "remove"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.removebuf"
+surface = "config_or_colon_command"
+name = "removebuf"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.rendition"
+surface = "config_or_colon_command"
+name = "rendition"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.reset"
+surface = "config_or_colon_command"
+name = "reset"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.screen"
+surface = "config_or_colon_command"
+name = "screen"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.scrollback"
+surface = "config_or_colon_command"
+name = "scrollback"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.search"
+surface = "config_or_colon_command"
+name = "search"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.select"
+surface = "config_or_colon_command"
+name = "select"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.sessionname"
+surface = "config_or_colon_command"
+name = "sessionname"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.setenv"
+surface = "config_or_colon_command"
+name = "setenv"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.shell"
+surface = "config_or_colon_command"
+name = "shell"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.shelltitle"
+surface = "config_or_colon_command"
+name = "shelltitle"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.silence"
+surface = "config_or_colon_command"
+name = "silence"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.silencewait"
+surface = "config_or_colon_command"
+name = "silencewait"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.sleep"
+surface = "config_or_colon_command"
+name = "sleep"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.slowpaste"
+surface = "config_or_colon_command"
+name = "slowpaste"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.sorendition"
+surface = "config_or_colon_command"
+name = "sorendition"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.sort"
+surface = "config_or_colon_command"
+name = "sort"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.source"
+surface = "config_or_colon_command"
+name = "source"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.split"
+surface = "config_or_colon_command"
+name = "split"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.startup_message"
+surface = "config_or_colon_command"
+name = "startup_message"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.stuff"
+surface = "config_or_colon_command"
+name = "stuff"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.su"
+surface = "config_or_colon_command"
+name = "su"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.suspend"
+surface = "config_or_colon_command"
+name = "suspend"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.term"
+surface = "config_or_colon_command"
+name = "term"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.terminfo"
+surface = "config_or_colon_command"
+name = "terminfo"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.time"
+surface = "config_or_colon_command"
+name = "time"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.title"
+surface = "config_or_colon_command"
+name = "title"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.umask"
+surface = "config_or_colon_command"
+name = "umask"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.unbind"
+surface = "config_or_colon_command"
+name = "unbind"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.unbindkey"
+surface = "config_or_colon_command"
+name = "unbindkey"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.unsetenv"
+surface = "config_or_colon_command"
+name = "unsetenv"
+status = "implemented"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+
+[[features]]
+id = "config_command.utf8"
+surface = "config_or_colon_command"
+name = "utf8"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.vbell"
+surface = "config_or_colon_command"
+name = "vbell"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.vbell_msg"
+surface = "config_or_colon_command"
+name = "vbell_msg"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.verbose"
+surface = "config_or_colon_command"
+name = "verbose"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.version"
+surface = "config_or_colon_command"
+name = "version"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.wall"
+surface = "config_or_colon_command"
+name = "wall"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.width"
+surface = "config_or_colon_command"
+name = "width"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.windowlist"
+surface = "config_or_colon_command"
+name = "windowlist"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.winlist"
+surface = "config_or_colon_command"
+name = "winlist"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.wipe"
+surface = "config_or_colon_command"
+name = "wipe"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.wrap"
+surface = "config_or_colon_command"
+name = "wrap"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.wrapsize"
+surface = "config_or_colon_command"
+name = "wrapsize"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.writebuf"
+surface = "config_or_colon_command"
+name = "writebuf"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.writelock"
+surface = "config_or_colon_command"
+name = "writelock"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.xoff"
+surface = "config_or_colon_command"
+name = "xoff"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.xon"
+surface = "config_or_colon_command"
+name = "xon"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.zmodem"
+surface = "config_or_colon_command"
+name = "zmodem"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "config_command.zombie"
+surface = "config_or_colon_command"
+name = "zombie"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Inventory item from the GNU/screen-rs command surface; parser/runtime parity requires command-specific expansion."
+
+[[features]]
+id = "terminal.printable-bytes"
+surface = "terminal"
+name = "printable-bytes"
+status = "implemented"
+unit_tests = ["crates/screen-terminal/src/lib.rs"]
+notes = "Printable byte handling is unit-tested."
+
+[[features]]
+id = "terminal.cursor-movement"
+surface = "terminal"
+name = "cursor-movement"
+status = "implemented"
+unit_tests = ["crates/screen-terminal/tests/isolated_terminal_tests.rs"]
+notes = "CSI cursor movement and clamping are tested."
+
+[[features]]
+id = "terminal.erase-line-display"
+surface = "terminal"
+name = "erase-line-display"
+status = "implemented"
+unit_tests = ["crates/screen-terminal/tests/isolated_terminal_tests.rs"]
+notes = "Erase operations are tested."
+
+[[features]]
+id = "terminal.sgr-basic-colors"
+surface = "terminal"
+name = "sgr-basic-colors"
+status = "implemented"
+unit_tests = ["crates/screen-terminal/tests/isolated_terminal_tests.rs"]
+notes = "Basic and bright SGR colors are tested."
+
+[[features]]
+id = "terminal.sgr-256-truecolor"
+surface = "terminal"
+name = "sgr-256-truecolor"
+status = "implemented"
+unit_tests = ["crates/screen-terminal/tests/isolated_terminal_tests.rs"]
+notes = "Extended color handling is tested."
+
+[[features]]
+id = "terminal.alternate-screen"
+surface = "terminal"
+name = "alternate-screen"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_fullscreen.rs", "crates/screen-terminal/src/lib.rs"]
+notes = "Terminal engine and fullscreen differential coverage exist."
+
+[[features]]
+id = "terminal.scrolling-regions"
+surface = "terminal"
+name = "scrolling-regions"
+status = "implemented"
+unit_tests = ["crates/screen-terminal/src/lib.rs"]
+notes = "Scrolling region unit coverage exists."
+
+[[features]]
+id = "terminal.unicode-wide-combining"
+surface = "terminal"
+name = "unicode-wide-combining"
+status = "implemented"
+unit_tests = ["crates/screen-terminal/src/lib.rs"]
+notes = "Wide and combining character handling is unit-tested."
+
+[[features]]
+id = "terminal.mouse-modes"
+surface = "terminal"
+name = "mouse-modes"
+status = "partial"
+unit_tests = ["crates/screen-terminal/tests/isolated_terminal_tests.rs"]
+notes = "Parser support exists; application-level GNU parity needs more differential tests."
+
+[[features]]
+id = "terminal.terminfo-adaptation"
+surface = "terminal"
+name = "terminfo-adaptation"
+status = "partial"
+unit_tests = ["crates/screen-daemon/src/termcap.rs"]
+notes = "Candidate termcap generation exists; full terminfo adaptation is not claimed."
+
+[[features]]
+id = "interactive.C-a_d"
+surface = "interactive_key"
+name = "C-a d"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_prefix.rs"]
+notes = "Default detach path is covered by PTY differential tests and lifecycle coverage."
+
+[[features]]
+id = "interactive.C-a_c"
+surface = "interactive_key"
+name = "C-a c"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_prefix.rs"]
+notes = "Interactive create-window prefix behavior is covered by PTY differential tests."
+
+[[features]]
+id = "interactive.C-a_n"
+surface = "interactive_key"
+name = "C-a n"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_prefix.rs"]
+notes = "Interactive next-window prefix behavior is covered by PTY differential tests."
+
+[[features]]
+id = "interactive.C-a_p"
+surface = "interactive_key"
+name = "C-a p"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_prefix.rs"]
+notes = "Interactive previous-window prefix behavior is covered by PTY differential tests."
+
+[[features]]
+id = "interactive.C-a_k"
+surface = "interactive_key"
+name = "C-a k"
+status = "partial"
+unit_tests = ["crates/screen-cli/src/main.rs"]
+notes = "Interactive kill path exists but needs GNU differential coverage."
+
+[[features]]
+id = "interactive.C-a_quote"
+surface = "interactive_key"
+name = "C-a \""
+status = "partial"
+unit_tests = ["crates/screen-cli/src/main.rs"]
+notes = "Window-list key path exists but needs PTY differential coverage."
+
+[[features]]
+id = "interactive.C-a_:"
+surface = "interactive_key"
+name = "C-a :"
+status = "partial"
+unit_tests = ["crates/screen-cli/src/main.rs"]
+notes = "Colon command entry exists but needs command-matrix coverage."
+
+[[features]]
+id = "interactive.custom_escape"
+surface = "interactive_key"
+name = "custom escape"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Config parser supports escape; runtime and CLI coverage are incomplete."
+
+[[features]]
+id = "interactive.copy_mode_keys"
+surface = "interactive_key"
+name = "copy mode keys"
+status = "missing"
+notes = "Copy-mode navigation and selection key parity is not complete."
+
+[[features]]
+id = "interactive.help_screen"
+surface = "interactive_key"
+name = "help screen"
+status = "partial"
+unit_tests = ["crates/screen-cli/src/main.rs"]
+notes = "Help text path exists; GNU presentation parity is not claimed."
+
+[[features]]
+id = "runtime.multi_window"
+surface = "runtime"
+name = "multiple windows"
+status = "partial"
+differential_tests = ["crates/screen-cli/tests/differential_session.rs"]
+notes = "Create/select/kill coverage exists, but full numbering, zombie, layout, hidden-output, and edge-case parity is incomplete."
+
+[[features]]
+id = "runtime.multi_display"
+surface = "runtime"
+name = "multiple displays"
+status = "missing"
+notes = "GNU -x/multiple simultaneous display semantics are not implemented to parity."
+
+[[features]]
+id = "runtime.copy_mode_registers"
+surface = "runtime"
+name = "copy mode, paste buffers, registers"
+status = "partial"
+unit_tests = ["crates/screen-terminal/src/lib.rs"]
+notes = "Data structures and some protocol paths exist; full interactive copy-mode parity is not claimed."
+
+[[features]]
+id = "runtime.multiuser_acl"
+surface = "runtime"
+name = "multiuser and ACL"
+status = "partial"
+unit_tests = ["crates/screen-config/src/lib.rs"]
+notes = "Parser/runtime ACL structures exist; cross-user authentication and authorization parity is not complete."
+
+[[features]]
+id = "runtime.socket_interop"
+surface = "runtime"
+name = "GNU control socket interoperability"
+status = "partial"
+unit_tests = ["crates/screen-nix-interop/src/lib.rs"]
+notes = "Discovery/protocol research module exists; GNU-client-to-candidate and candidate-to-GNU compatibility are not claimed."
+
+[[features]]
+id = "platform.utmp"
+surface = "platform"
+name = "utmp/utmpx login accounting"
+status = "missing"
+notes = "Platform accounting is documented as future work and not implemented to parity."
+

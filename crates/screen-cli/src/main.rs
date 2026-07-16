@@ -79,7 +79,7 @@ fn main() -> ExitCode {
             }
         },
         Ok(Invocation::RemoteCommand(options)) => report_result(remote_command(options)),
-        Ok(Invocation::Query(options)) => report_result(query_command(options)),
+        Ok(Invocation::Query(options)) => query_command(options),
         Ok(Invocation::List(options)) => match list_sessions(options) {
             Ok(has_sessions) => ExitCode::from(if has_sessions { 0 } else { 1 }),
             Err(error) => {
@@ -1840,20 +1840,164 @@ fn remote_command(options: RemoteCommandOptions) -> Result<(), String> {
     }
 }
 
-fn query_command(options: QueryOptions) -> Result<(), String> {
+fn query_command(options: QueryOptions) -> ExitCode {
     let Some(command) = options.command.first() else {
-        return Err("query command requires a command name".to_owned());
+        eprintln!("screen-rs: query command requires a command name");
+        return ExitCode::from(1);
     };
 
-    if command == OsStr::new("windows") || command == OsStr::new("winlist") {
-        let runtime = open_or_create_runtime()?;
-        let socket_path = resolve_session_socket(&runtime, options.session)?;
-        send_windows_list(socket_path)
+    if command == OsStr::new("sessionname") {
+        // GNU Screen reports this non-queryable command on stdout and exits 1.
+        println!("sessionname command cannot be queried.");
+        return ExitCode::from(1);
+    }
+
+    let result = if command == OsStr::new("windows") || command == OsStr::new("winlist") {
+        // GNU Screen 5.0.2 accepts this query but does not print the interactive
+        // window list to the querying process. Still resolve the session so
+        // missing-session failures match the other query commands.
+        let runtime = open_or_create_runtime();
+        runtime.and_then(|runtime| {
+            let _socket_path = resolve_session_socket(&runtime, options.session)?;
+            Ok(())
+        })
+    } else if command == OsStr::new("number") {
+        let runtime = open_or_create_runtime();
+        runtime.and_then(|runtime| {
+            let socket_path = resolve_session_socket(&runtime, options.session)?;
+            query_selected_window(socket_path, QueryField::Number)
+        })
+    } else if command == OsStr::new("title") {
+        let runtime = open_or_create_runtime();
+        runtime.and_then(|runtime| {
+            let socket_path = resolve_session_socket(&runtime, options.session)?;
+            query_selected_window(socket_path, QueryField::Title)
+        })
+    } else if command == OsStr::new("info") {
+        let runtime = open_or_create_runtime();
+        runtime.and_then(|runtime| {
+            let socket_path = resolve_session_socket(&runtime, options.session)?;
+            query_window_info(socket_path)
+        })
+    } else if command == OsStr::new("lastmsg") {
+        let runtime = open_or_create_runtime();
+        runtime.and_then(|runtime| {
+            let _socket_path = resolve_session_socket(&runtime, options.session)?;
+            Ok(())
+        })
+    } else if command == OsStr::new("time") {
+        let runtime = open_or_create_runtime();
+        runtime.and_then(|runtime| {
+            let _socket_path = resolve_session_socket(&runtime, options.session)?;
+            println!("{}", local_time_string()?);
+            Ok(())
+        })
+    } else if command == OsStr::new("version") {
+        let runtime = open_or_create_runtime();
+        runtime.and_then(|runtime| {
+            let _socket_path = resolve_session_socket(&runtime, options.session)?;
+            println!("screen-rs {VERSION}");
+            Ok(())
+        })
     } else {
         Err(format!(
             "query command is not implemented yet: {}",
             command.to_string_lossy()
         ))
+    };
+
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("screen-rs: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum QueryField {
+    Number,
+    Title,
+}
+
+fn query_selected_window(socket_path: PathBuf, field: QueryField) -> Result<(), String> {
+    let list = fetch_window_list(socket_path)?;
+    let selected = list
+        .iter()
+        .find(|w| w.flags & 1 != 0)
+        .or_else(|| list.first())
+        .ok_or_else(|| "no windows".to_owned())?;
+    let title = String::from_utf8_lossy(&selected.title);
+    match field {
+        QueryField::Number => print!("{} ({})", selected.number, title),
+        QueryField::Title => print!("{title}"),
+    }
+    Ok(())
+}
+
+fn query_window_info(socket_path: PathBuf) -> Result<(), String> {
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::WindowInfo(Vec::new())
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::WindowInfo(info) => {
+            io::stdout()
+                .write_all(&info)
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        }
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        message => Err(format!("unexpected response: {message:?}")),
+    }
+}
+
+fn local_time_string() -> Result<String, String> {
+    let now: libc::time_t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as libc::time_t)
+        .unwrap_or(0);
+    unsafe {
+        let tm: *mut libc::tm = libc::localtime(&now);
+        if tm.is_null() {
+            return Err("failed to get local time".to_owned());
+        }
+        let mut buf: [libc::c_char; 256] = [0; 256];
+        let n = libc::strftime(buf.as_mut_ptr(), buf.len(), c"%c".as_ptr(), tm);
+        if n == 0 {
+            return Err("failed to format local time".to_owned());
+        }
+        let s = std::ffi::CStr::from_ptr(buf.as_ptr());
+        Ok(s.to_string_lossy().into_owned())
+    }
+}
+
+fn fetch_window_list(socket_path: PathBuf) -> Result<Vec<screen_protocol::WindowInfoMsg>, String> {
+    let mut stream = UnixStream::connect(&socket_path)
+        .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
+    Message::Hello
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::HelloAck => {}
+        message => return Err(format!("unexpected daemon response: {message:?}")),
+    }
+    Message::WindowList(Vec::new())
+        .write_to(&mut stream)
+        .map_err(|error| error.to_string())?;
+    match Message::read_from(&mut stream).map_err(|error| error.to_string())? {
+        Message::WindowList(list) => Ok(list),
+        Message::Error(bytes) => Err(String::from_utf8_lossy(&bytes).into_owned()),
+        message => Err(format!("unexpected response: {message:?}")),
     }
 }
 

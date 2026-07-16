@@ -14,6 +14,8 @@ tests=(
   differential_cli
   differential_session
   differential_x_commands
+  differential_query
+  differential_prefix
   differential_fullscreen
 )
 

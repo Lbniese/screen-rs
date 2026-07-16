@@ -3,9 +3,9 @@
 `screen-rs` is an early Rust implementation effort targeting measured,
 versioned compatibility with GNU Screen.
 
-This repository is not GNU Screen compatible yet. The current binary is named
-`screen-rs` and prints development-only output for unimplemented runtime
-operations.
+This repository does not claim full GNU Screen compatibility yet. The current
+binary is named `screen-rs`; compatibility is developed and verified
+incrementally through versioned feature manifests and differential tests.
 
 ## Build
 

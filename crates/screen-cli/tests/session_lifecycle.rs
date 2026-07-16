@@ -427,6 +427,10 @@ fn password_protected_attach_prompts_and_accepts_password() {
         eprintln!("skipping password attach test: Unix socket bind is not permitted");
         return;
     }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping password attach test: PTY not available");
+        return;
+    }
 
     let session_name = "pwattach";
     let _guard = SessionGuard {
@@ -516,6 +520,10 @@ fn detached_session_exits_when_parent_pid_disappears() {
     let temp = TempDir::new("parent-pid");
     if !unix_socket_bind_allowed(temp.path()) {
         eprintln!("skipping parent-pid cleanup test: Unix socket bind is not permitted");
+        return;
+    }
+    if !screen_testkit::pty_available() {
+        eprintln!("skipping parent-pid cleanup test: PTY not available");
         return;
     }
 
