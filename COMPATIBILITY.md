@@ -1,6 +1,10 @@
 # Compatibility
 
-No GNU Screen compatibility profile is claimed yet.
+No full GNU Screen compatibility profile is claimed yet.
+
+Feature-level coverage for the first hard target is tracked in
+`compatibility/features/screen-5.0.2.toml` and enforced by
+`scripts/validate-compatibility-manifest.py`.
 
 ## Current Development Status
 
@@ -26,6 +30,12 @@ No GNU Screen compatibility profile is claimed yet.
 - Development-only snapshot attach and `-X quit` exist for candidate daemons.
 - Development-only `-X detach` and `-p 0 -X stuff` exist for the single-window
   candidate daemon.
+- Query mode has differential coverage for the first GNU Screen 5.0.2 query
+  probes: `-Q windows`, `-Q number`, `-Q title`, non-queryable
+  `-Q sessionname`, and normalized volatile probes for `-Q info`,
+  `-Q lastmsg`, `-Q time`, and `-Q version`.
+- Interactive prefix coverage now includes a PTY differential probe for
+  `C-a c`, `C-a p`, `C-a n`, and `C-a d`.
 - Detached child environment now matches tested GNU Screen behavior for
   `STY=<pid>.<session>`, `WINDOW=0`, default `TERM=screen`, and `-T term`.
 - Detached startup honors tested GNU Screen `-s shell` behavior when no explicit
@@ -53,10 +63,11 @@ No GNU Screen compatibility profile is claimed yet.
   output including filtered `-ls [match]`, child environment, `-T` terminal
   override, child-exit cleanup, `-s shell`, compact detached-create options,
   startup config from `-c`, `SCREENRC`, and `$HOME/.screenrc`, config `source`,
-  config `chdir`, `-L` default logging, config-driven logging, and
-  `-p 0 -X stuff` against the configured GNU Screen reference. Live GNU Screen
-  execution is skipped when the environment does not permit Unix socket
-  binding.
+  config `chdir`, `-L` default logging, config-driven logging,
+  `-p 0 -X stuff`, initial `-Q` query behavior, and prefix-key PTY behavior
+  against the configured GNU Screen reference. Live GNU Screen execution is
+  skipped when the environment does not permit Unix socket binding or PTY
+  allocation.
 
 ## Reference Profiles Under Test
 
