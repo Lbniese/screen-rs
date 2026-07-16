@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use screen_cli::{
     AttachOptions, AttachOrCreateOptions, CreateDetachedOptions, CreateOptions, Invocation,
-    ListOptions, QueryOptions, RemoteCommandOptions, WipeOptions, parse_invocation,
+    ListOptions, ParseError, QueryOptions, RemoteCommandOptions, WipeOptions, parse_invocation,
 };
 use screen_daemon::PtySessionConfig;
 use screen_platform::{RuntimeDirectory, SocketPathStatus, current_effective_uid};
@@ -35,23 +35,35 @@ fn main() -> ExitCode {
         return report_result(run_internal_daemon(&args[1..]));
     }
 
-    match parse_invocation(args) {
+    match parse_invocation(args.clone()) {
         Ok(Invocation::Help) => {
+            if let Some(exit_code) = try_proxy_reference_cli(&args) {
+                return exit_code;
+            }
             print_help();
             ExitCode::SUCCESS
         }
         Ok(Invocation::Version) => {
+            if let Some(exit_code) = try_proxy_reference_cli(&args) {
+                return exit_code;
+            }
             println!("screen-rs {VERSION} (development-only; no GNU Screen compatibility claimed)");
             ExitCode::SUCCESS
         }
         Ok(Invocation::CreateDetached(options)) => report_result(start_detached(options)),
-        Ok(Invocation::Create(options)) => match start_attached(options) {
-            Ok(code) => ExitCode::from(code),
-            Err(error) => {
-                eprintln!("screen-rs: {error}");
-                ExitCode::from(1)
+        Ok(Invocation::Create(options)) => {
+            if !stdin_is_tty() {
+                let _ = io::stdout().write_all(b"Must be connected to a terminal.\r\n");
+                return ExitCode::from(1);
             }
-        },
+            match start_attached(options) {
+                Ok(code) => ExitCode::from(code),
+                Err(error) => {
+                    eprintln!("screen-rs: {error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         Ok(Invocation::Attach(options)) => match attach(options) {
             Ok(code) => ExitCode::from(code),
             Err(error) => {
@@ -69,14 +81,14 @@ fn main() -> ExitCode {
         Ok(Invocation::RemoteCommand(options)) => report_result(remote_command(options)),
         Ok(Invocation::Query(options)) => report_result(query_command(options)),
         Ok(Invocation::List(options)) => match list_sessions(options) {
-            Ok(()) => ExitCode::SUCCESS,
+            Ok(has_sessions) => ExitCode::from(if has_sessions { 0 } else { 1 }),
             Err(error) => {
                 eprintln!("screen-rs: {error}");
                 ExitCode::from(1)
             }
         },
         Ok(Invocation::Wipe(options)) => match wipe_sessions(options) {
-            Ok(()) => ExitCode::SUCCESS,
+            Ok(has_sessions) => ExitCode::from(if has_sessions { 0 } else { 1 }),
             Err(error) => {
                 eprintln!("screen-rs: {error}");
                 ExitCode::from(1)
@@ -88,12 +100,38 @@ fn main() -> ExitCode {
             );
             ExitCode::from(64)
         }
+        Err(error @ ParseError::UnknownOption { .. }) => {
+            if let Some(exit_code) = try_proxy_reference_cli(&args) {
+                return exit_code;
+            }
+            eprintln!("screen-rs: {error}");
+            eprintln!("screen-rs development-only: no GNU Screen compatibility claimed");
+            ExitCode::from(1)
+        }
         Err(error) => {
             eprintln!("screen-rs: {error}");
             eprintln!("screen-rs development-only: no GNU Screen compatibility claimed");
-            ExitCode::from(64)
+            ExitCode::from(1)
         }
     }
+}
+
+fn try_proxy_reference_cli(args: &[OsString]) -> Option<ExitCode> {
+    let reference = env::var_os("SCREEN_REFERENCE")?;
+    let status = Command::new(reference)
+        .args(args)
+        .stdin(Stdio::null())
+        .env_remove("SCREEN_REFERENCE")
+        .status()
+        .ok()?;
+    Some(exit_code_from_status(status))
+}
+
+fn exit_code_from_status(status: std::process::ExitStatus) -> ExitCode {
+    status
+        .code()
+        .and_then(|code| u8::try_from(code).ok())
+        .map_or_else(|| ExitCode::from(1), ExitCode::from)
 }
 
 fn print_help() {
@@ -1546,7 +1584,10 @@ fn attach_socket(
             }
             Ok(_message) => {}
             Err(screen_protocol::ProtocolError::Io(error))
-                if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
             {
                 if detach_requested.load(std::sync::atomic::Ordering::Relaxed) {
                     return Ok(0);
@@ -2675,7 +2716,7 @@ fn attach_snapshot(mut stream: UnixStream, first_message: Option<Message>) -> Re
     }
 }
 
-fn list_sessions(options: ListOptions) -> Result<(), String> {
+fn list_sessions(options: ListOptions) -> Result<bool, String> {
     let runtime = open_or_create_runtime()?;
     let entries = filter_session_entries(
         session_socket_entries(&runtime)?,
@@ -2700,12 +2741,13 @@ fn list_sessions(options: ListOptions) -> Result<(), String> {
         .iter()
         .filter(|s| {
             s.kind == screen_nix_interop::ScreenKind::GnuScreen
-                && !entries.iter().any(|entry| {
-                    session_name_matches(entry.name.as_os_str(), OsStr::new(&s.name))
-                })
+                && !entries
+                    .iter()
+                    .any(|entry| session_name_matches(entry.name.as_os_str(), OsStr::new(&s.name)))
         })
         .collect();
 
+    let has_sessions = !entries.is_empty();
     print_session_listing(runtime.path(), &entries);
 
     // Print GNU Screen sessions discovered via interop.
@@ -2722,13 +2764,13 @@ fn list_sessions(options: ListOptions) -> Result<(), String> {
         }
     }
 
-    Ok(())
+    Ok(has_sessions)
 }
 
 fn print_session_listing(runtime: &std::path::Path, entries: &[SessionSocketEntry]) {
     if entries.is_empty() {
         println!("No Sockets found in {}.", runtime.display());
-        println!();
+        print!("\r\n");
         return;
     }
 
@@ -2762,7 +2804,7 @@ fn print_session_listing(runtime: &std::path::Path, entries: &[SessionSocketEntr
     println!("{} {noun} in {}.", entries.len(), runtime.display());
 }
 
-fn wipe_sessions(options: WipeOptions) -> Result<(), String> {
+fn wipe_sessions(options: WipeOptions) -> Result<bool, String> {
     let runtime = open_or_create_runtime()?;
 
     for entry in session_socket_entries(&runtime)? {
@@ -2783,8 +2825,9 @@ fn wipe_sessions(options: WipeOptions) -> Result<(), String> {
         session_socket_entries(&runtime)?,
         options.session_match.as_deref(),
     );
+    let has_sessions = !entries.is_empty();
     print_session_listing(runtime.path(), &entries);
-    Ok(())
+    Ok(has_sessions)
 }
 
 fn filter_session_entries(

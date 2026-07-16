@@ -1474,21 +1474,20 @@ fn execute_command(
         b"break" => {}
         // ── Additional commands from audit ──
         b"aclgrp" => {
-            config.aclgrp = Some(args.iter().cloned().collect());
+            config.aclgrp = Some(args.to_vec());
         }
         b"su" => {
             config.su = Some(one_arg(args, command, line)?.to_vec());
         }
         b"umask" => {
-            let text = std::str::from_utf8(one_arg(args, command, line)?).map_err(|_| {
-                ConfigError {
+            let text =
+                std::str::from_utf8(one_arg(args, command, line)?).map_err(|_| ConfigError {
                     line,
                     kind: ConfigErrorKind::InvalidArgument {
                         command: String::from_utf8_lossy(command).into_owned(),
                         value: "<non-utf8>".to_owned(),
                     },
-                }
-            })?;
+                })?;
             config.umask = Some(text.parse::<u32>().map_err(|_| ConfigError {
                 line,
                 kind: ConfigErrorKind::InvalidArgument {

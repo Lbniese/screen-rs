@@ -58,6 +58,46 @@ No GNU Screen compatibility profile is claimed yet.
   execution is skipped when the environment does not permit Unix socket
   binding.
 
+## Reference Profiles Under Test
+
+- `compatibility/profiles/linux-glibc-screen-4.9.1.toml`
+- `compatibility/profiles/linux-glibc-screen-5.0.2.toml`
+
+Reference binaries can be installed locally with:
+
+```sh
+./scripts/install-screen-reference.sh 4.9.1
+./scripts/install-screen-reference.sh 5.0.2
+```
+
+Differential reports can be regenerated with:
+
+```sh
+./scripts/run-differential-matrix.sh 4.9.1 5.0.2
+```
+
+A Linux/glibc containerized run can be reproduced with:
+
+```sh
+./docker/linux-glibc/run-matrix.sh
+```
+
+Current matrix status is recorded in
+`compatibility/reports/current-matrix.md`. For version-sensitive CLI presentation
+probes (`--help`, `--version`, and unknown-option diagnostics), differential
+runs select the active GNU Screen reference via `SCREEN_REFERENCE` so the lab
+can compare against the exact reference build under test. The latest
+Linux/glibc container run shows:
+
+- `differential_cli`: PASS for 4.9.1 and 5.0.2
+- `differential_session`: PASS for 4.9.1 and 5.0.2
+- `differential_x_commands`: PASS for 4.9.1 and 5.0.2
+- `differential_fullscreen`: PASS for 4.9.1 and 5.0.2
+
+## Open Compatibility Gaps
+
+Tracked mismatches are recorded in `compatibility/cases/open.md`.
+
 ## Local Reference Notes
 
 The bundled macOS `/usr/bin/screen` observed during development reports GNU

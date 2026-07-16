@@ -1,0 +1,10 @@
+[profile.linux_glibc_screen_4_9_1]
+screen_version = "4.9.1"
+os = "linux"
+arch = "x86_64"
+libc = "glibc"
+term = "xterm-256color"
+shell = "/bin/sh"
+locale = "C.UTF-8"
+reference_url = "https://ftp.gnu.org/gnu/screen/screen-4.9.1.tar.gz"
+reference_install = ".local/screen-4.9.1/bin/screen"

@@ -1,5 +1,6 @@
 use std::ffi::OsStr;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -518,6 +519,7 @@ impl TempDir {
     fn new(prefix: &str) -> Self {
         let dir = std::env::temp_dir().join(format!("screen-rs-test-{}-{}", prefix, nanos()));
         let _ = fs::create_dir_all(&dir);
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
         TempDir { path: dir }
     }
 

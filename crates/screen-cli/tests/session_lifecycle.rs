@@ -360,9 +360,23 @@ fn attach_or_create_creates_missing_session() {
 
     let session_name = "attach-or-create-new";
     let shell_path = temp.path().join("rr-shell");
-    fs::write(&shell_path, "#!/bin/sh\nprintf rr-ready; sleep 1\n").expect("write custom shell");
+    let ready_path = temp.path().join("rr-ready.out");
+    fs::write(
+        &shell_path,
+        format!(
+            "#!/bin/sh\nprintf rr-ready\nprintf rr-ready > \"{}\"\nsleep 1\n",
+            ready_path.display()
+        ),
+    )
+    .expect("write custom shell");
     fs::set_permissions(&shell_path, fs::Permissions::from_mode(0o700))
         .expect("chmod custom shell");
+    let screenrc_path = temp.path().join("attach-or-create.screenrc");
+    fs::write(
+        &screenrc_path,
+        format!("startup_message off\nshell {}\n", shell_path.display()),
+    )
+    .expect("write attach-or-create screenrc");
     let _guard = SessionGuard {
         candidate: candidate.clone(),
         runtime: temp.path().to_owned(),
@@ -373,8 +387,10 @@ fn attach_or_create_creates_missing_session() {
             OsString::from("SCREENDIR"),
             temp.path().as_os_str().to_owned(),
         ),
-        (OsString::from("SCREENRC"), OsString::from("/dev/null")),
-        (OsString::from("SHELL"), shell_path.as_os_str().to_owned()),
+        (
+            OsString::from("SCREENRC"),
+            screenrc_path.as_os_str().to_owned(),
+        ),
         (OsString::from("TERM"), OsString::from("xterm-256color")),
         (OsString::from("LC_ALL"), OsString::from("C")),
     ];
@@ -386,6 +402,12 @@ fn attach_or_create_creates_missing_session() {
     )
     .expect("spawn attach-or-create under PTY");
 
+    let ready = wait_for_file(&ready_path, Duration::from_secs(3))
+        .expect("attach-or-create writes ready file");
+    assert!(
+        contains(&ready, b"rr-ready"),
+        "attach-or-create ready file missing marker"
+    );
     process
         .read_until(b"rr-ready", Duration::from_secs(3))
         .expect("attach-or-create receives shell output");
@@ -449,7 +471,11 @@ fn password_protected_attach_prompts_and_accepts_password() {
         String::from_utf8_lossy(&denied.stdout),
         String::from_utf8_lossy(&denied.stderr)
     );
-    assert_contains("wrong-password stderr", &denied.stderr, b"Screen password: ");
+    assert_contains(
+        "wrong-password stderr",
+        &denied.stderr,
+        b"Screen password: ",
+    );
     assert_contains(
         "wrong-password stderr",
         &denied.stderr,
@@ -911,6 +937,31 @@ fn set_session_password(runtime: &Path, session_name: &str, password: &[u8]) {
     screen_protocol::Message::Command(command)
         .write_to(&mut stream)
         .expect("write password command");
+}
+
+fn wait_for_file(path: &Path, timeout: Duration) -> io::Result<Vec<u8>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match fs::read(path) {
+            Ok(bytes) => return Ok(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("timed out waiting for {}", path.display()),
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.is_empty()
+        || haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 fn wait_until_no_sessions(candidate: &Path, runtime: &Path) {

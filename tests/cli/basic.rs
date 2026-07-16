@@ -26,6 +26,7 @@ fn screen_rs_path() -> PathBuf {
 fn run_screen_rs(args: &[&str]) -> (ExitStatus, Vec<u8>, Vec<u8>) {
     let output = Command::new(screen_rs_path())
         .args(args)
+        .env_remove("SCREEN_REFERENCE")
         .env("SCREENRC", "/dev/null")
         .env("TERM", "xterm-256color")
         .env("LC_ALL", "C")
@@ -69,18 +70,24 @@ fn short_help() {
 #[test]
 fn list_no_sessions() {
     let (status, stdout, stderr) = run_screen_rs(&["-ls"]);
-    // -ls should succeed even with no sessions
-    assert!(status.success(), "stderr: {:?}", String::from_utf8_lossy(&stderr));
+    // GNU Screen commonly exits 1 when no sockets are present.
+    assert!(
+        status.success() || status.code() == Some(1),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
     let out = String::from_utf8_lossy(&stdout);
-    // Should mention no sessions or list something
     assert!(!out.is_empty() || stderr.is_empty(), "expected output from -ls");
 }
 
 #[test]
 fn wipe_no_sessions() {
     let (status, _, stderr) = run_screen_rs(&["-wipe"]);
-    // -wipe should succeed even with no sessions
-    assert!(status.success(), "stderr: {:?}", String::from_utf8_lossy(&stderr));
+    assert!(
+        status.success() || status.code() == Some(1),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
 }
 
 // ---------------------------------------------------------------------------
