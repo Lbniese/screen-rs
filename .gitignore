@@ -5,3 +5,8 @@
 *.swo
 .DS_Store
 implementation.md
+.local/
+/target-linux-glibc/
+compatibility/reports/raw/
+/crates/screen-cli/-h
+/crates/screen-cli/hardcopy.*

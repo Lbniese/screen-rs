@@ -24,6 +24,42 @@ jobs:
       - name: Cargo deny
         uses: EmbarkStudios/cargo-deny-action@v2
 
+  reference-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        screen_version: ["4.9.1", "5.0.2"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncursesw5-dev pkg-config curl
+      - name: Build GNU Screen reference
+        run: |
+          ./scripts/install-screen-reference.sh "${{ matrix.screen_version }}" "$RUNNER_TEMP/screen-${{ matrix.screen_version }}"
+      - name: Build candidate
+        run: cargo build --workspace
+      - name: Differential CLI/session matrix
+        env:
+          SCREEN_REFERENCE: ${{ runner.temp }}/screen-${{ matrix.screen_version }}/bin/screen
+          SCREEN_CANDIDATE: ${{ github.workspace }}/target/debug/screen-rs
+        run: |
+          mkdir -p compatibility/reports/raw
+          cargo test -p screen-cli --test differential_cli -- --nocapture | tee compatibility/reports/raw/differential_cli-screen-${{ matrix.screen_version }}.txt
+          cargo test -p screen-cli --test differential_session -- --nocapture | tee compatibility/reports/raw/differential_session-screen-${{ matrix.screen_version }}.txt
+          cargo test -p screen-cli --test differential_x_commands -- --nocapture | tee compatibility/reports/raw/differential_x_commands-screen-${{ matrix.screen_version }}.txt
+          cargo test -p screen-cli --test differential_fullscreen -- --nocapture | tee compatibility/reports/raw/differential_fullscreen-screen-${{ matrix.screen_version }}.txt
+      - name: Upload differential logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: differential-${{ matrix.screen_version }}
+          path: compatibility/reports/raw/*.txt
+
   musl-build:
     runs-on: ubuntu-latest
     steps:

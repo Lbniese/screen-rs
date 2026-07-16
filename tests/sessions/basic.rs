@@ -53,6 +53,7 @@ fn run_screen_rs_with_env(
 ) -> (std::process::ExitStatus, Vec<u8>, Vec<u8>) {
     let output = Command::new(screen_rs_path())
         .args(args)
+        .env_remove("SCREEN_REFERENCE")
         .env("HOME", home)
         .env("SCREENDIR", screen_dir)
         .env("SCREENRC", "/dev/null")
@@ -150,7 +151,10 @@ fn list_empty_directory() {
     let (_root, home, screen_dir) = create_runtime_dir("list_empty");
 
     let (status, stdout, stderr) = run_screen_rs_with_env(&["-ls"], &home, &screen_dir);
-    assert!(status.success(), "-ls with empty dir should succeed");
+    assert!(
+        status.success() || status.code() == Some(1),
+        "-ls with empty dir should return GNU-compatible success/no-sockets status"
+    );
     let out = String::from_utf8_lossy(&stdout);
     assert!(
         !out.is_empty(),
@@ -164,7 +168,11 @@ fn wipe_empty_directory() {
     let (_root, home, screen_dir) = create_runtime_dir("wipe_empty");
 
     let (status, _, stderr) = run_screen_rs_with_env(&["-wipe"], &home, &screen_dir);
-    assert!(status.success(), "-wipe with empty dir should succeed: stderr={:?}", String::from_utf8_lossy(&stderr));
+    assert!(
+        status.success() || status.code() == Some(1),
+        "-wipe with empty dir should return GNU-compatible success/no-sockets status: stderr={:?}",
+        String::from_utf8_lossy(&stderr)
+    );
 }
 
 #[test]

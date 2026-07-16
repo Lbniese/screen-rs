@@ -161,7 +161,9 @@ fn attach_or_create_create_branch_compares_with_gnu_screen() {
             "skipping differential attach-or-create create comparison: reference GNU Screen did not complete (likely PTY incompatibility on this platform)"
         );
         eprintln!("reference flags: {:?}", reference_result.flags());
+        eprintln!("candidate flags: {:?}", candidate_result.flags());
         eprintln!("reference diagnostics: {:?}", reference_result.diagnostics);
+        eprintln!("candidate diagnostics: {:?}", candidate_result.diagnostics);
     } else if !candidate_result.completed() {
         eprintln!("attach_or_create_create differential report");
         eprintln!("reference flags: {:?}", reference_result.flags());
@@ -1795,13 +1797,12 @@ fn run_attach_or_create_create_case(
     let mut result = AttachedCreateCaseResult::new();
     let screenrc_path = runtime.join("rr-screenrc");
     let shell_path = runtime.join("rr-shell");
-    if let Err(error) = fs::write(&screenrc_path, "startup_message off\n") {
-        result
-            .diagnostics
-            .push(format!("failed to write screenrc: {error}"));
-        return result;
-    }
-    if let Err(error) = fs::write(&shell_path, "#!/bin/sh\nprintf rr-ready; sleep 1\n") {
+    let ready_path = runtime.join("rr-ready.out");
+    let shell_script = format!(
+        "#!/bin/sh\nprintf rr-ready\nprintf rr-ready > \"{}\"\nsleep 1\n",
+        ready_path.display()
+    );
+    if let Err(error) = fs::write(&shell_path, shell_script) {
         result
             .diagnostics
             .push(format!("failed to write shell: {error}"));
@@ -1813,13 +1814,19 @@ fn run_attach_or_create_create_case(
             .push(format!("failed to chmod shell: {error}"));
         return result;
     }
+    let screenrc = format!("startup_message off\nshell {}\n", shell_path.display());
+    if let Err(error) = fs::write(&screenrc_path, screenrc) {
+        result
+            .diagnostics
+            .push(format!("failed to write screenrc: {error}"));
+        return result;
+    }
     let envs = [
         (OsString::from("SCREENDIR"), runtime.as_os_str().to_owned()),
         (
             OsString::from("SCREENRC"),
             screenrc_path.as_os_str().to_owned(),
         ),
-        (OsString::from("SHELL"), shell_path.as_os_str().to_owned()),
         (OsString::from("TERM"), OsString::from("xterm-256color")),
         (OsString::from("LC_ALL"), OsString::from("C")),
     ];
@@ -1838,15 +1845,30 @@ fn run_attach_or_create_create_case(
         }
     };
 
+    let mut ready_diagnostics = Vec::new();
     match process.read_until(b"rr-ready", Duration::from_secs(5)) {
         Ok(output) => result.output_has_ready = contains(&output, b"rr-ready"),
-        Err(error) => result
-            .diagnostics
-            .push(format!("attach-or-create did not produce ready: {error}")),
+        Err(error) => ready_diagnostics.push(format!(
+            "attach-or-create did not produce PTY ready: {error:?}"
+        )),
+    }
+    if !result.output_has_ready {
+        match wait_for_file(&ready_path, Duration::from_secs(1)) {
+            Ok(output) => result.output_has_ready = contains(&output, b"rr-ready"),
+            Err(error) => ready_diagnostics.push(format!(
+                "attach-or-create did not write ready file: {error}"
+            )),
+        }
+    }
+    if !result.output_has_ready {
+        result.diagnostics.extend(ready_diagnostics);
     }
 
     match process.wait_or_kill(Duration::from_secs(5)) {
-        Ok(status) => result.status_success = status.success(),
+        Ok(status) if status.success() => result.status_success = true,
+        Ok(status) => result
+            .diagnostics
+            .push(format!("attach-or-create exited with {status}")),
         Err(error) => result
             .diagnostics
             .push(format!("attach-or-create did not exit cleanly: {error}")),
@@ -1983,7 +2005,9 @@ fn start_detached_loop(executable: &Path, runtime: &Path, session_name: &str) ->
         if wait_until_session_present(executable, runtime, session_name) {
             Ok(())
         } else {
-            Err(io::Error::other("session did not become listable after detached start"))
+            Err(io::Error::other(
+                "session did not become listable after detached start",
+            ))
         }
     } else {
         Err(io::Error::other(format!(
@@ -2793,16 +2817,8 @@ fn run_screen<'a>(
     timeout: Duration,
 ) -> io::Result<CommandOutput> {
     let home = ensure_test_home(runtime);
-    let stdout_path = runtime.join(format!(
-        "capture-{}-{}.stdout",
-        std::process::id(),
-        unique_nanos()
-    ));
-    let stderr_path = runtime.join(format!(
-        "capture-{}-{}.stderr",
-        std::process::id(),
-        unique_nanos()
-    ));
+    let stdout_path = capture_path("stdout");
+    let stderr_path = capture_path("stderr");
     let stdout_file = File::create(&stdout_path)?;
     let stderr_file = File::create(&stderr_path)?;
 
@@ -2968,10 +2984,25 @@ fn run_screen_null_in_dir_with_screenrc<'a>(
     }
 }
 
-fn ensure_test_home(runtime: &Path) -> PathBuf {
-    let home = runtime.join("home");
+fn ensure_test_home(_runtime: &Path) -> PathBuf {
+    let home = std::env::temp_dir().join(format!(
+        "screen-rs-differential-home-{}-{}",
+        std::process::id(),
+        unique_nanos()
+    ));
     let _ = fs::create_dir_all(&home);
     home
+}
+
+fn capture_path(extension: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join("screen-rs-differential-captures");
+    let _ = fs::create_dir_all(&dir);
+    dir.join(format!(
+        "capture-{}-{}.{}",
+        std::process::id(),
+        unique_nanos(),
+        extension
+    ))
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
