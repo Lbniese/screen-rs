@@ -139,6 +139,32 @@ fn run_prefix_case(exe: &Path, runtime: &Path, tag: &str) -> PrefixCaseResult {
         return result;
     }
 
+    if let Err(error) = process.send(b"\x011") {
+        result.diagnostics = format!("send C-a 1: {error}");
+        let _ = quit_session(exe, runtime, &session_name);
+        return result;
+    }
+    if let Some(probe) = query_number_until(exe, runtime, &session_name, "after_digit_1", Some(1)) {
+        result.probes.push(probe);
+    } else {
+        result.diagnostics = "C-a 1 did not select window 1".to_owned();
+        let _ = quit_session(exe, runtime, &session_name);
+        return result;
+    }
+
+    if let Err(error) = process.send(b"\x01 ") {
+        result.diagnostics = format!("send C-a space: {error}");
+        let _ = quit_session(exe, runtime, &session_name);
+        return result;
+    }
+    if let Some(probe) = query_number_until(exe, runtime, &session_name, "after_space", Some(0)) {
+        result.probes.push(probe);
+    } else {
+        result.diagnostics = "C-a space did not advance to window 0".to_owned();
+        let _ = quit_session(exe, runtime, &session_name);
+        return result;
+    }
+
     if let Err(error) = process.send(b"\x01d") {
         result.diagnostics = format!("send C-a d: {error}");
         let _ = quit_session(exe, runtime, &session_name);

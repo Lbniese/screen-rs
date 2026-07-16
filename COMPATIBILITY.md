@@ -3,8 +3,10 @@
 No full GNU Screen compatibility profile is claimed yet.
 
 Feature-level coverage for the first hard target is tracked in
-`compatibility/features/screen-5.0.2.toml` and enforced by
-`scripts/validate-compatibility-manifest.py`.
+`compatibility/features/screen-5.0.2.toml`, summarized in
+`compatibility/reports/manifest-summary.md`, and enforced by
+`scripts/validate-compatibility-manifest.py` plus
+`scripts/compatibility-summary.py --check`.
 
 ## Current Development Status
 
@@ -32,10 +34,12 @@ Feature-level coverage for the first hard target is tracked in
   candidate daemon.
 - Query mode has differential coverage for the first GNU Screen 5.0.2 query
   probes: `-Q windows`, `-Q number`, `-Q title`, non-queryable
-  `-Q sessionname`, and normalized volatile probes for `-Q info`,
-  `-Q lastmsg`, `-Q time`, and `-Q version`.
+  `-Q sessionname` plus a non-queryable command subset, and normalized volatile
+  probes for `-Q info`, `-Q lastmsg`, `-Q time`, and `-Q version`.
 - Interactive prefix coverage now includes a PTY differential probe for
-  `C-a c`, `C-a p`, `C-a n`, and `C-a d`.
+  `C-a c`, `C-a p`, `C-a n`, `C-a space`, `C-a 1`, and `C-a d`.
+- Missing manifest entries are tracked as work items in
+  `compatibility/issues/missing-manifest-work-items.md`.
 - Detached child environment now matches tested GNU Screen behavior for
   `STY=<pid>.<session>`, `WINDOW=0`, default `TERM=screen`, and `-T term`.
 - Detached startup honors tested GNU Screen `-s shell` behavior when no explicit

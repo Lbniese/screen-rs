@@ -1494,15 +1494,16 @@ fn run_zombie_renumber_case(
     // Wait for quick window to die and become zombie
     std::thread::sleep(Duration::from_secs(5));
 
-    // Query windows via -Q — should show 0 (alive) and 1 (dead/zombie)
-    // GNU Screen marks dead windows with "(dead)" in the title column
+    // List windows via -X — candidate -Q windows intentionally follows GNU
+    // Screen 5.0.2's no-output query behavior, while -X windows exposes the
+    // current machine-readable window list used by this candidate-only probe.
     match run_screen(
         executable,
         runtime,
         [
             OsStr::new("-S"),
             OsStr::new(session_name),
-            OsStr::new("-Q"),
+            OsStr::new("-X"),
             OsStr::new("windows"),
         ],
         Duration::from_secs(5),

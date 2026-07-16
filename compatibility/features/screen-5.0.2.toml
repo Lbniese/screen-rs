@@ -1136,6 +1136,54 @@ differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
 notes = "Covered by -Q differential tests."
 
 [[features]]
+id = "q_command.nonqueryable_stuff"
+surface = "query_command"
+name = "non-queryable stuff"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "GNU Screen reports this known command as non-queryable; stdout/status behavior is covered by -Q differential tests."
+
+[[features]]
+id = "q_command.nonqueryable_kill"
+surface = "query_command"
+name = "non-queryable kill"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "GNU Screen reports this known command as non-queryable; stdout/status behavior is covered by -Q differential tests."
+
+[[features]]
+id = "q_command.nonqueryable_quit"
+surface = "query_command"
+name = "non-queryable quit"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "GNU Screen reports this known command as non-queryable; stdout/status behavior is covered by -Q differential tests."
+
+[[features]]
+id = "q_command.nonqueryable_screen"
+surface = "query_command"
+name = "non-queryable screen"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "GNU Screen reports this known command as non-queryable; stdout/status behavior is covered by -Q differential tests."
+
+[[features]]
+id = "q_command.nonqueryable_help"
+surface = "query_command"
+name = "non-queryable help"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "GNU Screen reports this known command as non-queryable; stdout/status behavior is covered by -Q differential tests."
+
+[[features]]
+id = "q_command.nonqueryable_license"
+surface = "query_command"
+name = "non-queryable license"
+status = "implemented"
+differential_tests = ["crates/screen-cli/tests/differential_query.rs"]
+notes = "GNU Screen reports this known command as non-queryable; stdout/status behavior is covered by -Q differential tests."
+
+[[features]]
 id = "config_command.acladd"
 surface = "config_or_colon_command"
 name = "acladd"
@@ -2779,8 +2827,8 @@ id = "runtime.multi_window"
 surface = "runtime"
 name = "multiple windows"
 status = "partial"
-differential_tests = ["crates/screen-cli/tests/differential_session.rs"]
-notes = "Create/select/kill coverage exists, but full numbering, zombie, layout, hidden-output, and edge-case parity is incomplete."
+differential_tests = ["crates/screen-cli/tests/differential_session.rs", "crates/screen-cli/tests/differential_multi_window.rs"]
+notes = "Create/select/kill/renumber/title coverage exists, but full zombie, layout, hidden-output, and edge-case parity is incomplete."
 
 [[features]]
 id = "runtime.multi_display"

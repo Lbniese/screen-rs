@@ -1463,6 +1463,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         if let Some(idx) = new_idx {
                             client.last_selected = client.selected;
                             client.selected = idx;
+                            session.selected = idx;
                         }
                         let _ = Message::WindowSelected { number }.write_to(&mut client.stream);
                         if let Some(idx) = new_idx
@@ -1481,6 +1482,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         if let Some(new_idx) = session.next_window_index(current) {
                             client.last_selected = current;
                             client.selected = new_idx;
+                            session.selected = new_idx;
                             let number = session.windows[new_idx].number;
                             let _ = Message::WindowSelected { number }.write_to(&mut client.stream);
                             if let Some(window) = session.windows.get(new_idx) {
@@ -1498,6 +1500,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         if let Some(new_idx) = session.prev_window_index(current) {
                             client.last_selected = current;
                             client.selected = new_idx;
+                            session.selected = new_idx;
                             let number = session.windows[new_idx].number;
                             let _ = Message::WindowSelected { number }.write_to(&mut client.stream);
                             if let Some(window) = session.windows.get(new_idx) {
@@ -1524,6 +1527,13 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     );
                     match result {
                         Ok(win) => {
+                            if let Some(idx) = session.window_index(win.number)
+                                && let Some(client) = clients.iter_mut().find(|c| c.id == id)
+                            {
+                                client.last_selected = client.selected;
+                                client.selected = idx;
+                                session.selected = idx;
+                            }
                             send_to_client(
                                 &mut clients,
                                 id,
@@ -2749,6 +2759,11 @@ impl SessionState {
         let number = self.next_number;
         self.next_number += 1;
 
+        let program = if program.as_encoded_bytes().is_empty() {
+            OsStr::new("/bin/sh")
+        } else {
+            program
+        };
         let mut cmd = PtyCommand::new(program, size);
         cmd.args(args.iter());
         if let Some(wd) = working_directory {
@@ -2800,9 +2815,7 @@ impl SessionState {
 
         self.windows.push(window);
         let idx = self.windows.len() - 1;
-        if self.windows.len() == 1 {
-            self.selected = idx;
-        }
+        self.selected = idx;
 
         Ok(WindowCreated {
             window_id: id,
@@ -4139,6 +4152,21 @@ fn accept_connections(
                             }
                         }
                     }
+                    Ok(Message::WindowTitle { number, title }) => {
+                        if let Some(idx) = session.window_index(number)
+                            && let Some(window) = session.windows.get_mut(idx)
+                        {
+                            window.terminal.title =
+                                if title.is_empty() { None } else { Some(title) };
+                            Message::WindowTitle {
+                                number,
+                                title: window.terminal.title.clone().unwrap_or_default(),
+                            }
+                            .write_to(&mut stream)?;
+                        } else {
+                            Message::Error(b"no such window".to_vec()).write_to(&mut stream)?;
+                        }
+                    }
                     Ok(Message::Redisplay) => {
                         // Send a full terminal redraw to every attached client
                         if let Some(window) = session.windows.get(session.selected) {
@@ -4250,6 +4278,20 @@ fn accept_connections(
                         {
                             // Send break by using tcsendbreak if available
                             // For now, send a null byte as a simple break approximation
+                        }
+                    }
+                    Ok(Message::WindowInfo(_)) => {
+                        if let Some(window) = session.windows.get(session.selected) {
+                            let info = format!(
+                                "window {} ({})  alive: {}  scrollback: {}\r\n",
+                                window.number,
+                                String::from_utf8_lossy(
+                                    window.terminal.title.as_deref().unwrap_or(b"")
+                                ),
+                                window.alive,
+                                window.terminal.scrollback_len()
+                            );
+                            Message::WindowInfo(info.into_bytes()).write_to(&mut stream)?;
                         }
                     }
                     Ok(Message::SearchHistory(query)) => {

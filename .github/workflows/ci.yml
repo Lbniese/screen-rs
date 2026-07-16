@@ -20,7 +20,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Validate compatibility manifest
-        run: scripts/validate-compatibility-manifest.py
+        run: |
+          scripts/validate-compatibility-manifest.py
+          scripts/compatibility-summary.py --check compatibility/reports/manifest-summary.md
       - name: Test
         run: cargo test --workspace
       - name: Cargo deny
@@ -52,12 +54,13 @@ jobs:
           SCREEN_CANDIDATE: ${{ github.workspace }}/target/debug/screen-rs
         run: |
           mkdir -p compatibility/reports/raw
-          cargo test -p screen-cli --test differential_cli -- --nocapture | tee compatibility/reports/raw/differential_cli-screen-${{ matrix.screen_version }}.txt
-          cargo test -p screen-cli --test differential_session -- --nocapture | tee compatibility/reports/raw/differential_session-screen-${{ matrix.screen_version }}.txt
-          cargo test -p screen-cli --test differential_x_commands -- --nocapture | tee compatibility/reports/raw/differential_x_commands-screen-${{ matrix.screen_version }}.txt
-          cargo test -p screen-cli --test differential_query -- --nocapture | tee compatibility/reports/raw/differential_query-screen-${{ matrix.screen_version }}.txt
-          cargo test -p screen-cli --test differential_prefix -- --nocapture | tee compatibility/reports/raw/differential_prefix-screen-${{ matrix.screen_version }}.txt
-          cargo test -p screen-cli --test differential_fullscreen -- --nocapture | tee compatibility/reports/raw/differential_fullscreen-screen-${{ matrix.screen_version }}.txt
+          cargo test -p screen-cli --test differential_cli -- --nocapture --test-threads=1 | tee compatibility/reports/raw/differential_cli-screen-${{ matrix.screen_version }}.txt
+          cargo test -p screen-cli --test differential_session -- --nocapture --test-threads=1 | tee compatibility/reports/raw/differential_session-screen-${{ matrix.screen_version }}.txt
+          cargo test -p screen-cli --test differential_x_commands -- --nocapture --test-threads=1 | tee compatibility/reports/raw/differential_x_commands-screen-${{ matrix.screen_version }}.txt
+          cargo test -p screen-cli --test differential_query -- --nocapture --test-threads=1 | tee compatibility/reports/raw/differential_query-screen-${{ matrix.screen_version }}.txt
+          cargo test -p screen-cli --test differential_prefix -- --nocapture --test-threads=1 | tee compatibility/reports/raw/differential_prefix-screen-${{ matrix.screen_version }}.txt
+          cargo test -p screen-cli --test differential_multi_window -- --nocapture --test-threads=1 | tee compatibility/reports/raw/differential_multi_window-screen-${{ matrix.screen_version }}.txt
+          cargo test -p screen-cli --test differential_fullscreen -- --nocapture --test-threads=1 | tee compatibility/reports/raw/differential_fullscreen-screen-${{ matrix.screen_version }}.txt
       - name: Upload differential logs
         uses: actions/upload-artifact@v4
         with:
