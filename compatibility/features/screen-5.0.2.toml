@@ -27,15 +27,17 @@ notes = "Version presentation is differentially tested for configured references
 id = "cli.dasha"
 surface = "cli_option"
 name = "-a"
-status = "missing"
-notes = "Parsed/runtime termcap force-all behavior is not implemented yet."
+status = "partial"
+unit_tests = ["crates/screen-cli/src/invocation.rs"]
+notes = "CLI parsing for -a option is implemented; runtime termcap behavior is not yet implemented."
 
 [[features]]
 id = "cli.dashA"
 surface = "cli_option"
 name = "-A"
-status = "missing"
-notes = "Adapt-all display resize behavior is not implemented yet."
+status = "partial"
+unit_tests = ["crates/screen-cli/src/invocation.rs"]
+notes = "CLI parsing for -A option is implemented; runtime adapt-all display resize behavior is not yet implemented."
 
 [[features]]
 id = "cli.dashc"
@@ -89,8 +91,9 @@ notes = "Config escape parsing exists; CLI -e runtime behavior needs differentia
 id = "cli.dashf"
 surface = "cli_option"
 name = "-f"
-status = "missing"
-notes = "CLI flow-control option behavior is not implemented as a parity surface."
+status = "partial"
+unit_tests = ["crates/screen-cli/src/invocation.rs"]
+notes = "CLI parsing for -f, -fn, -fa flow control options is implemented; runtime flow control behavior is not yet implemented."
 
 [[features]]
 id = "cli.dashh"
@@ -104,8 +107,9 @@ notes = "Scrollback model exists; CLI scrollback-size compatibility is not claim
 id = "cli.dashi"
 surface = "cli_option"
 name = "-i"
-status = "missing"
-notes = "Interrupt-output-sooner behavior is not implemented."
+status = "partial"
+unit_tests = ["crates/screen-cli/src/invocation.rs"]
+notes = "CLI parsing for -i option is implemented; runtime interrupt-output-sooner behavior is not yet implemented."
 
 [[features]]
 id = "cli.dashls"
@@ -143,8 +147,9 @@ notes = "Config/runtime logfile support exists; CLI spelling needs direct differ
 id = "cli.dashO"
 surface = "cli_option"
 name = "-O"
-status = "missing"
-notes = "Optimal-output emulation mode is not implemented."
+status = "partial"
+unit_tests = ["crates/screen-cli/src/invocation.rs"]
+notes = "CLI parsing for -O option is implemented; runtime optimal-output emulation mode is not yet implemented."
 
 [[features]]
 id = "cli.dashp"
@@ -166,8 +171,9 @@ notes = "Candidate password attach exists; GNU authentication parity needs more 
 id = "cli.dashq"
 surface = "cli_option"
 name = "-q"
-status = "missing"
-notes = "Quiet startup semantics are not implemented."
+status = "partial"
+unit_tests = ["crates/screen-cli/src/invocation.rs"]
+notes = "CLI parsing for -q option is implemented; runtime quiet startup behavior is not yet implemented."
 
 [[features]]
 id = "cli.dashQ"
@@ -237,8 +243,9 @@ notes = "TERM override in child environment is covered."
 id = "cli.dashU"
 surface = "cli_option"
 name = "-U"
-status = "missing"
-notes = "CLI UTF-8 mode switch is not claimed."
+status = "partial"
+unit_tests = ["crates/screen-cli/src/invocation.rs"]
+notes = "CLI parsing for -U option is implemented; runtime UTF-8 mode behavior is not yet implemented."
 
 [[features]]
 id = "cli.dashv"
@@ -260,8 +267,9 @@ notes = "Empty and active/stale wipe behavior is covered for current socket mode
 id = "cli.dashx"
 surface = "cli_option"
 name = "-x"
-status = "missing"
-notes = "Multi-display attach mode is not implemented to GNU parity."
+status = "partial"
+unit_tests = ["crates/screen-cli/src/invocation.rs"]
+notes = "CLI parsing for -x option is implemented; runtime multi-display attach mode is not yet implemented."
 
 [[features]]
 id = "cli.dashX"

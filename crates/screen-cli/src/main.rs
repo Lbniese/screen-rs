@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use screen_cli::{
     AttachOptions, AttachOrCreateOptions, CreateDetachedOptions, CreateOptions, Invocation,
-    ListOptions, ParseError, QueryOptions, RemoteCommandOptions, WipeOptions, parse_invocation,
+    ListOptions, ParseError, QueryOptions, RemoteCommandOptions, WipeOptions, FlowControlMode, parse_invocation,
 };
 use screen_daemon::PtySessionConfig;
 use screen_platform::{RuntimeDirectory, SocketPathStatus, current_effective_uid};
@@ -240,6 +240,13 @@ fn start_detached(options: CreateDetachedOptions) -> Result<(), String> {
         term: options.term,
         shell: options.shell,
         logging: options.logging,
+        quiet: options.quiet,
+        flow_control: options.flow_control,
+        interrupt_sooner: options.interrupt_sooner,
+        optimal_output: options.optimal_output,
+        utf8_mode: options.utf8_mode,
+        adapt_all_windows: options.adapt_all_windows,
+        force_all_capabilities: options.force_all_capabilities,
         command: options.command,
         announce_detached: true,
     })
@@ -253,12 +260,20 @@ fn start_attached(options: CreateOptions) -> Result<u8, String> {
         term: options.term,
         shell: options.shell,
         logging: options.logging,
+        quiet: options.quiet,
+        flow_control: options.flow_control,
+        interrupt_sooner: options.interrupt_sooner,
+        optimal_output: options.optimal_output,
+        utf8_mode: options.utf8_mode,
+        adapt_all_windows: options.adapt_all_windows,
+        force_all_capabilities: options.force_all_capabilities,
         command: options.command,
         announce_detached: false,
     })?;
 
     attach(AttachOptions {
         session: Some(session_name),
+        multi_display: false,
     })
 }
 
@@ -268,6 +283,13 @@ struct SessionStartOptions {
     term: Option<OsString>,
     shell: Option<OsString>,
     logging: bool,
+    quiet: bool,
+    flow_control: Option<FlowControlMode>,
+    interrupt_sooner: bool,
+    optimal_output: bool,
+    utf8_mode: bool,
+    adapt_all_windows: bool,
+    force_all_capabilities: bool,
     command: Vec<OsString>,
     announce_detached: bool,
 }
@@ -859,6 +881,13 @@ fn attach_or_create(options: AttachOrCreateOptions) -> Result<u8, String> {
             shell: None,
             logging: false,
             force_new: false,
+            quiet: false,
+            flow_control: None,
+            interrupt_sooner: false,
+            optimal_output: false,
+            utf8_mode: false,
+            adapt_all_windows: false,
+            force_all_capabilities: false,
             command: Vec::new(),
         }),
         ActiveSessionMatch::Multiple => {
