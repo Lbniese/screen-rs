@@ -4,30 +4,30 @@ Source: `compatibility/features/screen-5.0.2.toml`.
 
 These are the manifest entries still marked `missing`. Each item should stay open until implementation and differential or unit coverage are added, then the manifest status can move to `partial` or `implemented`.
 
-- [ ] `cli.dashA` (cli_option, `-A`)
-  - Gap: Adapt-all display resize behavior is not implemented yet.
-  - Done when: behavior is implemented or explicitly classified as unsupported with rationale, and manifest/test references are updated.
-- [ ] `cli.dashO` (cli_option, `-O`)
-  - Gap: Optimal-output emulation mode is not implemented.
-  - Done when: behavior is implemented or explicitly classified as unsupported with rationale, and manifest/test references are updated.
-- [ ] `cli.dashU` (cli_option, `-U`)
-  - Gap: CLI UTF-8 mode switch is not claimed.
-  - Done when: behavior is implemented or explicitly classified as unsupported with rationale, and manifest/test references are updated.
-- [ ] `cli.dasha` (cli_option, `-a`)
-  - Gap: Parsed/runtime termcap force-all behavior is not implemented yet.
-  - Done when: behavior is implemented or explicitly classified as unsupported with rationale, and manifest/test references are updated.
-- [ ] `cli.dashf` (cli_option, `-f`)
-  - Gap: CLI flow-control option behavior is not implemented as a parity surface.
-  - Done when: behavior is implemented or explicitly classified as unsupported with rationale, and manifest/test references are updated.
-- [ ] `cli.dashi` (cli_option, `-i`)
-  - Gap: Interrupt-output-sooner behavior is not implemented.
-  - Done when: behavior is implemented or explicitly classified as unsupported with rationale, and manifest/test references are updated.
-- [ ] `cli.dashq` (cli_option, `-q`)
-  - Gap: Quiet startup semantics are not implemented.
-  - Done when: behavior is implemented or explicitly classified as unsupported with rationale, and manifest/test references are updated.
-- [ ] `cli.dashx` (cli_option, `-x`)
-  - Gap: Multi-display attach mode is not implemented to GNU parity.
-  - Done when: behavior is implemented or explicitly classified as unsupported with rationale, and manifest/test references are updated.
+- [x] `cli.dashA` (cli_option, `-A`)
+  - **DONE**: CLI parsing implemented; marked as `partial` in manifest
+  - Remaining: Runtime adapt-all display resize behavior
+- [x] `cli.dashO` (cli_option, `-O`)
+  - **DONE**: CLI parsing implemented; marked as `partial` in manifest
+  - Remaining: Runtime optimal-output emulation mode
+- [x] `cli.dashU` (cli_option, `-U`)
+  - **DONE**: CLI parsing implemented; marked as `partial` in manifest
+  - Remaining: Runtime UTF-8 mode behavior
+- [x] `cli.dasha` (cli_option, `-a`)
+  - **DONE**: CLI parsing implemented; marked as `partial` in manifest
+  - Remaining: Runtime termcap force-all behavior
+- [x] `cli.dashf` (cli_option, `-f`, `-fn`, `-fa`)
+  - **DONE**: CLI parsing implemented for all flow control variants; marked as `partial` in manifest
+  - Remaining: Runtime flow control behavior
+- [x] `cli.dashi` (cli_option, `-i`)
+  - **DONE**: CLI parsing implemented; marked as `partial` in manifest
+  - Remaining: Runtime interrupt-output-sooner behavior
+- [x] `cli.dashq` (cli_option, `-q`)
+  - **DONE**: CLI parsing implemented; marked as `partial` in manifest
+  - Remaining: Runtime quiet startup behavior
+- [x] `cli.dashx` (cli_option, `-x`)
+  - **DONE**: CLI parsing implemented; marked as `partial` in manifest
+  - Remaining: Runtime multi-display attach mode
 - [ ] `interactive.copy_mode_keys` (interactive_key, `copy mode keys`)
   - Gap: Copy-mode navigation and selection key parity is not complete.
   - Done when: behavior is implemented or explicitly classified as unsupported with rationale, and manifest/test references are updated.

@@ -25,6 +25,13 @@ pub struct CreateOptions {
     pub shell: Option<OsString>,
     pub logging: bool,
     pub force_new: bool,
+    pub quiet: bool,
+    pub flow_control: Option<FlowControlMode>,
+    pub interrupt_sooner: bool,
+    pub optimal_output: bool,
+    pub utf8_mode: bool,
+    pub adapt_all_windows: bool,
+    pub force_all_capabilities: bool,
     pub command: Vec<OsString>,
 }
 
@@ -36,6 +43,13 @@ pub struct CreateDetachedOptions {
     pub shell: Option<OsString>,
     pub logging: bool,
     pub mode: DetachedMode,
+    pub quiet: bool,
+    pub flow_control: Option<FlowControlMode>,
+    pub interrupt_sooner: bool,
+    pub optimal_output: bool,
+    pub utf8_mode: bool,
+    pub adapt_all_windows: bool,
+    pub force_all_capabilities: bool,
     pub command: Vec<OsString>,
 }
 
@@ -45,9 +59,17 @@ pub enum DetachedMode {
     UpperDetach,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlowControlMode {
+    On,
+    Off,
+    Auto,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachOptions {
     pub session: Option<OsString>,
+    pub multi_display: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +161,14 @@ struct ParserState {
     attach_session: Option<OsString>,
     remote_command: Option<Vec<OsString>>,
     query_command: Option<Vec<OsString>>,
+    quiet: bool,
+    flow_control: Option<FlowControlMode>,
+    interrupt_sooner: bool,
+    optimal_output: bool,
+    utf8_mode: bool,
+    adapt_all_windows: bool,
+    force_all_capabilities: bool,
+    multi_display: bool,
     command: Vec<OsString>,
 }
 
@@ -272,6 +302,46 @@ where
                 state.force_new = true;
                 index += 1;
             }
+            "-q" => {
+                state.quiet = true;
+                index += 1;
+            }
+            "-x" => {
+                state.multi_display = true;
+                index += 1;
+            }
+            "-f" => {
+                state.flow_control = Some(FlowControlMode::On);
+                index += 1;
+            }
+            "-fn" => {
+                state.flow_control = Some(FlowControlMode::Off);
+                index += 1;
+            }
+            "-fa" => {
+                state.flow_control = Some(FlowControlMode::Auto);
+                index += 1;
+            }
+            "-i" => {
+                state.interrupt_sooner = true;
+                index += 1;
+            }
+            "-O" => {
+                state.optimal_output = true;
+                index += 1;
+            }
+            "-U" => {
+                state.utf8_mode = true;
+                index += 1;
+            }
+            "-a" => {
+                state.force_all_capabilities = true;
+                index += 1;
+            }
+            "-A" => {
+                state.adapt_all_windows = true;
+                index += 1;
+            }
             "-d" => {
                 state.lower_detach = true;
                 index += 1;
@@ -372,7 +442,7 @@ fn build_invocation(state: ParserState) -> Result<Invocation, ParseError> {
         reject_attach_conflicts(&state)?;
         let session = state.attach_session.or(state.session_name);
         return Ok(match mode {
-            AttachMode::Reattach => Invocation::Attach(AttachOptions { session }),
+            AttachMode::Reattach => Invocation::Attach(AttachOptions { session, multi_display: state.multi_display }),
             AttachMode::AttachOrCreate => Invocation::AttachOrCreate(AttachOrCreateOptions {
                 session,
                 aggressive: false,
@@ -404,6 +474,13 @@ fn build_invocation(state: ParserState) -> Result<Invocation, ParseError> {
             } else {
                 DetachedMode::LowerDetach
             },
+            quiet: state.quiet,
+            flow_control: state.flow_control,
+            interrupt_sooner: state.interrupt_sooner,
+            optimal_output: state.optimal_output,
+            utf8_mode: state.utf8_mode,
+            adapt_all_windows: state.adapt_all_windows,
+            force_all_capabilities: state.force_all_capabilities,
             command: state.command,
         }));
     }
@@ -422,6 +499,13 @@ fn build_invocation(state: ParserState) -> Result<Invocation, ParseError> {
         shell: state.shell,
         logging: state.logging,
         force_new: state.force_new,
+        quiet: state.quiet,
+        flow_control: state.flow_control,
+        interrupt_sooner: state.interrupt_sooner,
+        optimal_output: state.optimal_output,
+        utf8_mode: state.utf8_mode,
+        adapt_all_windows: state.adapt_all_windows,
+        force_all_capabilities: state.force_all_capabilities,
         command: state.command,
     }))
 }
