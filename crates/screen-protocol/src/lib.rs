@@ -28,7 +28,10 @@ pub enum Message {
     HelloAck,
     Shutdown,
     ShutdownAck,
-    Attach(Option<Vec<u8>>),
+    Attach {
+        password: Option<Vec<u8>>,
+        multi_display: bool,
+    },
     Detach,
     PtyInput(Vec<u8>),
     PtyOutput(Vec<u8>),
@@ -216,12 +219,20 @@ impl Message {
         let at_window_payload;
         let copy_move_payload;
         let copy_cursor_payload;
+        let mut attach_payload;
         let (kind, payload): (MessageKind, &[u8]) = match self {
             Self::Hello => (MessageKind::Hello, &[][..]),
             Self::HelloAck => (MessageKind::HelloAck, &[][..]),
             Self::Shutdown => (MessageKind::Shutdown, &[][..]),
             Self::ShutdownAck => (MessageKind::ShutdownAck, &[][..]),
-            Self::Attach(password) => (MessageKind::Attach, password.as_deref().unwrap_or(&[])),
+            Self::Attach {
+                password,
+                multi_display,
+            } => {
+                attach_payload = password.as_deref().unwrap_or(&[]).to_vec();
+                attach_payload.push(if *multi_display { 1 } else { 0 });
+                (MessageKind::Attach, &attach_payload)
+            }
             Self::Detach => (MessageKind::Detach, &[][..]),
             Self::NextWindow => (MessageKind::NextWindow, &[][..]),
             Self::PrevWindow => (MessageKind::PrevWindow, &[][..]),
@@ -488,11 +499,29 @@ impl Message {
             MessageKind::HelloAck if payload.is_empty() => Ok(Self::HelloAck),
             MessageKind::Shutdown if payload.is_empty() => Ok(Self::Shutdown),
             MessageKind::ShutdownAck if payload.is_empty() => Ok(Self::ShutdownAck),
-            MessageKind::Attach => Ok(Self::Attach(if payload.is_empty() {
-                None
-            } else {
-                Some(payload.to_vec())
-            })),
+            MessageKind::Attach => {
+                #[allow(clippy::if_same_then_else)]
+                let (password, multi_display) = if payload.is_empty() {
+                    (None, false)
+                } else if payload.len() == 1 && payload[0] == 0 {
+                    (None, false)
+                } else if payload.len() == 1 && payload[0] == 1 {
+                    (None, true)
+                } else {
+                    // Last byte is multi_display flag, rest is password
+                    let multi_display = payload.last() == Some(&1);
+                    let password = if payload.len() > 1 {
+                        Some(payload[..payload.len() - 1].to_vec())
+                    } else {
+                        None
+                    };
+                    (password, multi_display)
+                };
+                Ok(Self::Attach {
+                    password,
+                    multi_display,
+                })
+            }
             MessageKind::Detach if payload.is_empty() => Ok(Self::Detach),
             MessageKind::NextWindow if payload.is_empty() => Ok(Self::NextWindow),
             MessageKind::PrevWindow if payload.is_empty() => Ok(Self::PrevWindow),
@@ -1246,13 +1275,19 @@ mod tests {
     #[test]
     fn attach_round_trips() {
         // None case
-        let msg = Message::Attach(None);
+        let msg = Message::Attach {
+            password: None,
+            multi_display: false,
+        };
         let mut buf = Vec::new();
         msg.write_to(&mut buf).unwrap();
         assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
 
         // Some password
-        let msg = Message::Attach(Some(b"p4ss".to_vec()));
+        let msg = Message::Attach {
+            password: Some(b"p4ss".to_vec()),
+            multi_display: true,
+        };
         let mut buf = Vec::new();
         msg.write_to(&mut buf).unwrap();
         assert_eq!(Message::read_from(&mut buf.as_slice()).unwrap(), msg);
@@ -1419,8 +1454,14 @@ mod tests {
             Message::HelloAck,
             Message::Shutdown,
             Message::ShutdownAck,
-            Message::Attach(None),
-            Message::Attach(Some(b"pw".to_vec())),
+            Message::Attach {
+                password: None,
+                multi_display: false,
+            },
+            Message::Attach {
+                password: Some(b"pw".to_vec()),
+                multi_display: true,
+            },
             Message::Detach,
             Message::PtyInput(b"in".to_vec()),
             Message::PtyOutput(b"out".to_vec()),

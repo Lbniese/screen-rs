@@ -12,9 +12,9 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
-screen-terminal = { path = "../crates/screen-terminal" }
-screen-protocol = { path = "../crates/screen-protocol" }
-screen-config = { path = "../crates/screen-config" }
+screen-terminal = { path = "../crates/screen-terminal", version = "0.0.1" }
+screen-protocol = { path = "../crates/screen-protocol", version = "0.0.1" }
+screen-config = { path = "../crates/screen-config", version = "0.0.1" }
 
 [[bin]]
 name = "terminal_parser"

@@ -3943,7 +3943,10 @@ fn accept_connections(
 
                 // Process the actual command
                 match Message::read_from(&mut stream) {
-                    Ok(Message::Attach(password)) => {
+                    Ok(Message::Attach {
+                        password,
+                        multi_display,
+                    }) => {
                         // Password check (before ACL check).
                         if let Some(ref required) = session.password {
                             let password = match password {
@@ -3953,7 +3956,7 @@ fn accept_connections(
                                     // connection and wait for a follow-up Attach message.
                                     Message::PasswordChallenge.write_to(&mut stream)?;
                                     match Message::read_from(&mut stream) {
-                                        Ok(Message::Attach(password)) => password,
+                                        Ok(Message::Attach { password, .. }) => password,
                                         Ok(message) => {
                                             write_protocol_error(
                                                 &mut stream,
@@ -4006,6 +4009,11 @@ fn accept_connections(
                                 )?;
                                 continue;
                             }
+                        }
+                        // Handle multi-display semantics
+                        // If multi_display is false and there are existing clients, detach them first
+                        if !multi_display && !clients.is_empty() {
+                            detach_all_clients(clients)?;
                         }
                         // Full attach - add to clients list
                         // Send a grid redraw so the client sees current terminal state

@@ -12,8 +12,9 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use screen_cli::{
-    AttachOptions, AttachOrCreateOptions, CreateDetachedOptions, CreateOptions, Invocation,
-    ListOptions, ParseError, QueryOptions, RemoteCommandOptions, WipeOptions, FlowControlMode, parse_invocation,
+    AttachOptions, AttachOrCreateOptions, CreateDetachedOptions, CreateOptions, FlowControlMode,
+    Invocation, ListOptions, ParseError, QueryOptions, RemoteCommandOptions, WipeOptions,
+    parse_invocation,
 };
 use screen_daemon::PtySessionConfig;
 use screen_platform::{RuntimeDirectory, SocketPathStatus, current_effective_uid};
@@ -277,6 +278,7 @@ fn start_attached(options: CreateOptions) -> Result<u8, String> {
     })
 }
 
+#[allow(dead_code)]
 struct SessionStartOptions {
     session_name: Option<OsString>,
     config_file: Option<OsString>,
@@ -859,7 +861,12 @@ fn run_internal_daemon(args: &[OsString]) -> Result<(), String> {
 fn attach(options: AttachOptions) -> Result<u8, String> {
     let runtime = open_or_create_runtime()?;
     let socket_path = resolve_session_socket(&runtime, options.session)?;
-    attach_socket(socket_path, resolve_escape(), resolve_bindings())
+    attach_socket(
+        socket_path,
+        resolve_escape(),
+        resolve_bindings(),
+        options.multi_display,
+    )
 }
 
 fn attach_or_create(options: AttachOrCreateOptions) -> Result<u8, String> {
@@ -873,7 +880,7 @@ fn attach_or_create(options: AttachOrCreateOptions) -> Result<u8, String> {
     let escape = resolve_escape();
     let bindings = resolve_bindings();
     match find_active_session_socket(&runtime, options.session.as_deref())? {
-        ActiveSessionMatch::One(socket_path) => attach_socket(socket_path, escape, bindings),
+        ActiveSessionMatch::One(socket_path) => attach_socket(socket_path, escape, bindings, false),
         ActiveSessionMatch::None => start_attached(CreateOptions {
             session_name: options.session,
             config_file: None,
@@ -965,6 +972,7 @@ fn attach_socket(
     socket_path: PathBuf,
     escape: Vec<u8>,
     bindings: Vec<(Vec<u8>, Vec<Vec<u8>>)>,
+    multi_display: bool,
 ) -> Result<u8, String> {
     let mut stream = UnixStream::connect(&socket_path)
         .map_err(|error| format!("failed to connect {}: {error}", socket_path.display()))?;
@@ -976,9 +984,12 @@ fn attach_socket(
         Message::HelloAck => {}
         message => return Err(format!("unexpected daemon response: {message:?}")),
     }
-    Message::Attach(None)
-        .write_to(&mut stream)
-        .map_err(|error| error.to_string())?;
+    Message::Attach {
+        password: None,
+        multi_display,
+    }
+    .write_to(&mut stream)
+    .map_err(|error| error.to_string())?;
 
     // Check if the daemon requires a password.
     let first_message = loop {
@@ -986,9 +997,12 @@ fn attach_socket(
             Message::PasswordChallenge => {
                 // Daemon requires a password — prompt the user.
                 let password = prompt_password()?;
-                Message::Attach(Some(password.into_bytes()))
-                    .write_to(&mut stream)
-                    .map_err(|error| error.to_string())?;
+                Message::Attach {
+                    password: Some(password.into_bytes()),
+                    multi_display,
+                }
+                .write_to(&mut stream)
+                .map_err(|error| error.to_string())?;
             }
             Message::Error(bytes) => {
                 return Err(String::from_utf8_lossy(&bytes).into_owned());
