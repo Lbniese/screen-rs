@@ -442,7 +442,10 @@ fn build_invocation(state: ParserState) -> Result<Invocation, ParseError> {
         reject_attach_conflicts(&state)?;
         let session = state.attach_session.or(state.session_name);
         return Ok(match mode {
-            AttachMode::Reattach => Invocation::Attach(AttachOptions { session, multi_display: state.multi_display }),
+            AttachMode::Reattach => Invocation::Attach(AttachOptions {
+                session,
+                multi_display: state.multi_display,
+            }),
             AttachMode::AttachOrCreate => Invocation::AttachOrCreate(AttachOrCreateOptions {
                 session,
                 aggressive: false,
@@ -763,6 +766,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 force_new: false,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: vec![os("sh"), os("-c"), os("printf ready")],
             }))
         );
@@ -779,6 +789,13 @@ mod tests {
                 shell: Some(os("/tmp/custom-shell")),
                 logging: false,
                 mode: DetachedMode::LowerDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: Vec::new(),
             }))
         );
@@ -795,6 +812,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 mode: DetachedMode::LowerDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: Vec::new(),
             }))
         );
@@ -811,6 +835,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 mode: DetachedMode::LowerDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: vec![os("sh")],
             }))
         );
@@ -827,6 +858,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 mode: DetachedMode::LowerDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: vec![os("sh")],
             }))
         );
@@ -843,6 +881,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 mode: DetachedMode::UpperDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: Vec::new(),
             }))
         );
@@ -859,6 +904,13 @@ mod tests {
                 shell: None,
                 logging: true,
                 mode: DetachedMode::LowerDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: vec![os("sh")],
             }))
         );
@@ -875,6 +927,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 mode: DetachedMode::LowerDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: vec![os("sh")],
             }))
         );
@@ -887,6 +946,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 mode: DetachedMode::LowerDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: vec![os("sh")],
             }))
         );
@@ -899,6 +965,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 mode: DetachedMode::UpperDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: vec![os("sh")],
             }))
         );
@@ -910,6 +983,7 @@ mod tests {
             parse_invocation(["-r", "demo"]),
             Ok(Invocation::Attach(AttachOptions {
                 session: Some(os("demo")),
+                multi_display: false,
             }))
         );
         assert_eq!(
@@ -1003,13 +1077,17 @@ mod tests {
                 shell: None,
                 logging: false,
                 mode: DetachedMode::LowerDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: vec![os("sh")],
             }))
         );
-    }
 
-    #[test]
-    fn parses_dm_s_upper_with_attached_name() {
         assert_eq!(
             parse_invocation(["-DmSdemo", "sh"]),
             Ok(Invocation::CreateDetached(CreateDetachedOptions {
@@ -1019,6 +1097,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 mode: DetachedMode::UpperDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: vec![os("sh")],
             }))
         );
@@ -1035,6 +1120,13 @@ mod tests {
                 shell: None,
                 logging: true,
                 mode: DetachedMode::LowerDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: vec![os("sh")],
             }))
         );
@@ -1051,6 +1143,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 mode: DetachedMode::LowerDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: vec![os("sh")],
             }))
         );
@@ -1067,6 +1166,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 mode: DetachedMode::LowerDetach,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: Vec::new(),
             }))
         );
@@ -1138,6 +1244,13 @@ mod tests {
                 shell: None,
                 logging: false,
                 force_new: false,
+                quiet: false,
+                flow_control: None,
+                interrupt_sooner: false,
+                optimal_output: false,
+                utf8_mode: false,
+                adapt_all_windows: false,
+                force_all_capabilities: false,
                 command: Vec::new(),
             }))
         );

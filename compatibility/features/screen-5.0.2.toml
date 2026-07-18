@@ -267,9 +267,9 @@ notes = "Empty and active/stale wipe behavior is covered for current socket mode
 id = "cli.dashx"
 surface = "cli_option"
 name = "-x"
-status = "partial"
-unit_tests = ["crates/screen-cli/src/invocation.rs"]
-notes = "CLI parsing for -x option is implemented; runtime multi-display attach mode is not yet implemented."
+status = "implemented"
+unit_tests = ["crates/screen-cli/src/invocation.rs", "crates/screen-protocol/src/lib.rs"]
+notes = "Multi-display attach mode is fully implemented. Without -x, attaching to an active session detaches existing clients. With -x, multiple clients can attach simultaneously."
 
 [[features]]
 id = "cli.dashX"

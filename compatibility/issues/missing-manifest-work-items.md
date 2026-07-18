@@ -26,8 +26,10 @@ These are the manifest entries still marked `missing`. Each item should stay ope
   - **DONE**: CLI parsing implemented; marked as `partial` in manifest
   - Remaining: Runtime quiet startup behavior
 - [x] `cli.dashx` (cli_option, `-x`)
-  - **DONE**: CLI parsing implemented; marked as `partial` in manifest
-  - Remaining: Runtime multi-display attach mode
+  - **COMPLETE**: Full multi-display attach mode implemented
+  - Daemon detaches existing clients on normal attach
+  - Daemon allows multiple simultaneous attaches with -x flag
+  - Protocol updated to support multi_display flag in Attach message
 - [ ] `interactive.copy_mode_keys` (interactive_key, `copy mode keys`)
   - Gap: Copy-mode navigation and selection key parity is not complete.
   - Done when: behavior is implemented or explicitly classified as unsupported with rationale, and manifest/test references are updated.

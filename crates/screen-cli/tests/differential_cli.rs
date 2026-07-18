@@ -27,15 +27,42 @@ fn first_cli_differential_cases_produce_structured_reports() {
         ("list_no_sessions", vec![OsString::from("-ls")]),
         ("wipe_no_sessions", vec![OsString::from("-wipe")]),
         // New CLI options - these should at least parse without errors
-        ("quiet_mode", vec![OsString::from("-q"), OsString::from("--version")]),
-        ("flow_control_on", vec![OsString::from("-f"), OsString::from("--version")]),
-        ("flow_control_off", vec![OsString::from("-fn"), OsString::from("--version")]),
-        ("flow_control_auto", vec![OsString::from("-fa"), OsString::from("--version")]),
-        ("interrupt_sooner", vec![OsString::from("-i"), OsString::from("--version")]),
-        ("optimal_output", vec![OsString::from("-O"), OsString::from("--version")]),
-        ("utf8_mode", vec![OsString::from("-U"), OsString::from("--version")]),
-        ("force_all_capabilities", vec![OsString::from("-a"), OsString::from("--version")]),
-        ("adapt_all_windows", vec![OsString::from("-A"), OsString::from("--version")]),
+        (
+            "quiet_mode",
+            vec![OsString::from("-q"), OsString::from("--version")],
+        ),
+        (
+            "flow_control_on",
+            vec![OsString::from("-f"), OsString::from("--version")],
+        ),
+        (
+            "flow_control_off",
+            vec![OsString::from("-fn"), OsString::from("--version")],
+        ),
+        (
+            "flow_control_auto",
+            vec![OsString::from("-fa"), OsString::from("--version")],
+        ),
+        (
+            "interrupt_sooner",
+            vec![OsString::from("-i"), OsString::from("--version")],
+        ),
+        (
+            "optimal_output",
+            vec![OsString::from("-O"), OsString::from("--version")],
+        ),
+        (
+            "utf8_mode",
+            vec![OsString::from("-U"), OsString::from("--version")],
+        ),
+        (
+            "force_all_capabilities",
+            vec![OsString::from("-a"), OsString::from("--version")],
+        ),
+        (
+            "adapt_all_windows",
+            vec![OsString::from("-A"), OsString::from("--version")],
+        ),
     ];
 
     let mut reports = Vec::new();
@@ -53,7 +80,7 @@ fn first_cli_differential_cases_produce_structured_reports() {
         reports.push(report);
     }
 
-    assert_eq!(reports.len(), 6);
+    assert_eq!(reports.len(), 15);
 
     for report in reports {
         if !report.is_match() {
