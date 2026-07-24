@@ -3,10 +3,10 @@
 No full GNU Screen compatibility profile is claimed yet.
 
 Feature-level coverage for the first hard target is tracked in
-`compatibility/features/screen-5.0.2.toml`, summarized in
-`compatibility/reports/manifest-summary.md`, and enforced by
-`scripts/validate-compatibility-manifest.py` plus
-`scripts/compatibility-summary.py --check`.
+`compatibility/features/screen-5.0.2.toml`, summarized by
+`scripts/compatibility-summary.py`, and validated by
+`scripts/validate-compatibility-manifest.py`. CI regenerates this summary on each
+run and uploads it as the `compatibility-manifest-summary` workflow artifact.
 
 ## Current Development Status
 

@@ -2,8 +2,10 @@
 """Summarize compatibility feature manifest coverage.
 
 By default this prints a Markdown summary for all manifests under
-compatibility/features. Use --check <path> in CI to ensure a checked-in report is
-in sync with the manifest.
+compatibility/features.
+
+Use `--check <path>` when comparing generated output against a checked-in
+baseline report.
 """
 
 from __future__ import annotations
