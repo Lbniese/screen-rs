@@ -1710,23 +1710,36 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     let exchange_path = session.exchange_file.clone();
                     let path =
                         exchange_path.unwrap_or_else(|| PathBuf::from("/tmp/screen-exchange"));
-                    if let Ok(data) = fs::read(&path) {
-                        let _ = send_to_client(&mut clients, id, &Message::PasteRequest(data));
+                    match fs::read(&path) {
+                        Ok(data) => {
+                            let _ = send_to_client(&mut clients, id, &Message::PasteRequest(data));
+                        }
+                        Err(error) => {
+                            let message =
+                                Message::Error(format!("readbuf failed: {error}").into_bytes());
+                            let _ = send_to_client(&mut clients, id, &message);
+                        }
                     }
                 }
                 ClientEvent::WriteBuf(id, data) => {
                     let exchange_path = session.exchange_file.clone();
                     let path =
                         exchange_path.unwrap_or_else(|| PathBuf::from("/tmp/screen-exchange"));
-                    let _ = fs::write(&path, &data);
-                    let _ = id;
+                    if let Err(error) = fs::write(&path, &data) {
+                        let message =
+                            Message::Error(format!("writebuf failed: {error}").into_bytes());
+                        let _ = send_to_client(&mut clients, id, &message);
+                    }
                 }
                 ClientEvent::RemoveBuf(id) => {
                     let exchange_path = session.exchange_file.clone();
                     let path =
                         exchange_path.unwrap_or_else(|| PathBuf::from("/tmp/screen-exchange"));
-                    let _ = fs::remove_file(&path);
-                    let _ = id;
+                    if let Err(error) = fs::remove_file(&path) {
+                        let message =
+                            Message::Error(format!("removebuf failed: {error}").into_bytes());
+                        let _ = send_to_client(&mut clients, id, &message);
+                    }
                 }
                 ClientEvent::RegisterOp(id, name, data) => {
                     if data.is_empty() {
