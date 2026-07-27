@@ -2148,10 +2148,12 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         }
                     }
 
-                    // Bell detection: handle visual/audible bell
+                    // Bell detection: retain bells until a client can observe them.
                     if window.terminal.take_bell() {
+                        window.bell_pending = true;
+                    }
+                    if window.bell_pending && !clients.is_empty() {
                         if session.vbell {
-                            // Flash reverse video for visual bell
                             for client in clients.iter_mut() {
                                 let _ = client.stream.write_all(b"\x1b[?5h");
                                 let _ = client.stream.flush();
@@ -2162,10 +2164,10 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                                 let _ = client.stream.flush();
                             }
                         } else {
-                            // Audible: send bell message
                             let msg = session.bell_msg.clone().unwrap_or_else(|| b"bell".to_vec());
                             broadcast(&mut clients, &Message::Bell(msg))?;
                         }
+                        window.bell_pending = false;
                     }
 
                     // Silence monitoring: check for windows with silence timeout
@@ -2608,6 +2610,8 @@ struct ManagedWindow {
     zmodem_active: bool,
     /// Character encoding for this window (e.g., "UTF-8", "ISO-8859-1").
     encoding: Option<Vec<u8>>,
+    /// Bell observed before a client was attached.
+    bell_pending: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2837,6 +2841,7 @@ impl SessionState {
             group: self.default_group.clone(),
             zmodem_active: false,
             encoding: self.encoding.clone(),
+            bell_pending: false,
         };
 
         self.windows.push(window);
@@ -4061,6 +4066,15 @@ fn accept_connections(
                             if !redraw.is_empty() {
                                 Message::PtyOutput(redraw).write_to(&mut stream)?;
                             }
+                        }
+                        if let Some(window) = session.windows.get_mut(session.selected)
+                            && window.bell_pending
+                        {
+                            Message::Bell(
+                                session.bell_msg.clone().unwrap_or_else(|| b"bell".to_vec()),
+                            )
+                            .write_to(&mut stream)?;
+                            window.bell_pending = false;
                         }
                         clear_client_read_timeout(&stream)?;
                         // Send current bindings to the new client
