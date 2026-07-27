@@ -46,27 +46,53 @@ pub(crate) fn get_peer_uid(stream: &UnixStream) -> Option<u32> {
 
 /// Resolve a UID to a username.
 pub(crate) fn get_username_for_uid(uid: u32) -> String {
-    let mut buf = vec![0u8; 256];
-    let mut result: *mut libc::passwd = std::ptr::null_mut();
-    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buffer_size = 256;
+    loop {
+        let mut buf = vec![0u8; buffer_size];
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
 
-    let ret = unsafe {
-        libc::getpwuid_r(
-            uid,
-            &mut pwd,
-            buf.as_mut_ptr() as *mut libc::c_char,
-            buf.len(),
-            &mut result,
-        )
-    };
-    if ret == 0 && !result.is_null() {
-        let name_ptr = unsafe { (*result).pw_name };
-        if !name_ptr.is_null() {
-            return unsafe { std::ffi::CStr::from_ptr(name_ptr) }
-                .to_string_lossy()
-                .into_owned();
+        let ret = unsafe {
+            libc::getpwuid_r(
+                uid,
+                &mut pwd,
+                buf.as_mut_ptr() as *mut libc::c_char,
+                buf.len(),
+                &mut result,
+            )
+        };
+        if ret == libc::ERANGE {
+            buffer_size = buffer_size.saturating_mul(2);
+            continue;
+        }
+        if ret == 0 && !result.is_null() {
+            let name_ptr = unsafe { (*result).pw_name };
+            if !name_ptr.is_null() {
+                return unsafe { std::ffi::CStr::from_ptr(name_ptr) }
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        }
+        // Not found or another lookup error: fall back to the UID.
+        return uid.to_string();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_username_for_uid;
+
+    #[test]
+    fn resolves_current_user() {
+        let name = get_username_for_uid(unsafe { libc::getuid() });
+        assert!(!name.is_empty());
+    }
+
+    #[test]
+    fn falls_back_to_numeric_for_nonexistent_uid() {
+        let name = get_username_for_uid(65_000);
+        if name.chars().all(|character| character.is_ascii_digit()) {
+            assert_eq!(name, "65000");
         }
     }
-    // Fallback: return uid as string
-    uid.to_string()
 }
