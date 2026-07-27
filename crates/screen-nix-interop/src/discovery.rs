@@ -87,8 +87,7 @@ fn screendir() -> PathBuf {
         if modern.exists() {
             return modern;
         }
-        let legacy = PathBuf::from(format!("/tmp/uscreens/S-{user}"));
-        return legacy;
+        PathBuf::from(format!("/tmp/uscreens/S-{user}"))
     }
 
     #[cfg(target_os = "macos")]
