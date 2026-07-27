@@ -15,6 +15,10 @@ fn multi_window_select_renumber_title_kill_compares_with_gnu_screen() {
     if !ready(&cand_dir) || !ready(&ref_dir) {
         return;
     }
+    if !supports_query(&reference, ref_dir.path()) {
+        eprintln!("skipping multi-window differential test: reference lacks -Q support");
+        return;
+    }
 
     let ref_result = run_multi_window_case(&reference, ref_dir.path(), "mwref");
     let cand_result = run_multi_window_case(&candidate, cand_dir.path(), "mwcand");
@@ -413,6 +417,27 @@ fn env_cand() -> PathBuf {
     std::env::var_os("SCREEN_CANDIDATE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_screen-rs")))
+}
+
+fn supports_query(exe: &Path, runtime: &Path) -> bool {
+    match run_screen(
+        exe,
+        runtime,
+        &[OsStr::new("-Q"), OsStr::new("number")],
+        Duration::from_secs(5),
+    ) {
+        Ok(output) => {
+            let diagnostics = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            !diagnostics
+                .to_ascii_lowercase()
+                .contains("unknown option -q")
+        }
+        Err(_) => false,
+    }
 }
 
 fn ready(dir: &TempDir) -> bool {
