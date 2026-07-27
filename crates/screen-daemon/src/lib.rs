@@ -1,8 +1,7 @@
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::ffi::OsStringExt;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -12,12 +11,17 @@ use std::time::{Duration, SystemTime};
 mod encoding;
 mod error;
 mod peer_cred;
+mod socket_util;
 mod termcap;
 
 pub use error::DaemonError;
 use screen_protocol::{Message, WindowInfoMsg};
 use screen_pty::{PtyCommand, PtyProcess, PtySize};
 use screen_terminal::{Dimensions, Style, TerminalState};
+use socket_util::{
+    SocketCleanup, ensure_parent_exists, open_log_file, reject_existing_socket_path,
+    restrict_socket_permissions, sty_value,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonState {
@@ -4649,77 +4653,6 @@ fn set_socket_timeout(result: io::Result<()>) -> Result<(), DaemonError> {
         Err(error) if error.kind() == io::ErrorKind::InvalidInput => Ok(()),
         Err(error) => Err(DaemonError::ConfigureClient(error)),
     }
-}
-
-// ─── Socket cleanup ────────────────────────────────────────────────────────
-
-struct SocketCleanup {
-    path: PathBuf,
-}
-
-impl SocketCleanup {
-    fn new(path: PathBuf) -> Self {
-        Self { path }
-    }
-}
-
-impl Drop for SocketCleanup {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-fn ensure_parent_exists(path: &Path) -> Result<(), DaemonError> {
-    let Some(parent) = path.parent() else {
-        return Ok(());
-    };
-    fs::create_dir_all(parent).map_err(|source| DaemonError::Io {
-        path: parent.to_owned(),
-        source,
-    })
-}
-
-/// Set the socket file mode to owner read/write only.
-fn restrict_socket_permissions(path: &Path) -> Result<(), DaemonError> {
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|source| DaemonError::Io {
-        path: path.to_owned(),
-        source,
-    })
-}
-
-fn reject_existing_socket_path(path: &Path) -> Result<(), DaemonError> {
-    match fs::symlink_metadata(path) {
-        Ok(_metadata) => Err(DaemonError::SocketPathExists {
-            path: path.to_owned(),
-        }),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(DaemonError::Io {
-            path: path.to_owned(),
-            source,
-        }),
-    }
-}
-
-fn sty_value(socket_path: &Path) -> OsString {
-    socket_path
-        .file_name()
-        .unwrap_or_else(|| OsStr::new("screen-rs"))
-        .to_owned()
-}
-
-fn open_log_file(path: Option<&Path>) -> Result<Option<File>, DaemonError> {
-    let Some(path) = path else {
-        return Ok(None);
-    };
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|source| DaemonError::Io {
-            path: path.to_owned(),
-            source,
-        })?;
-    Ok(Some(file))
 }
 
 enum DaemonSignal {
