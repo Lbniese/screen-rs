@@ -897,7 +897,16 @@ fn attach_or_create(options: AttachOrCreateOptions) -> Result<u8, String> {
             force_all_capabilities: false,
             command: Vec::new(),
         }),
-        ActiveSessionMatch::Multiple => {
+        ActiveSessionMatch::Multiple(socket_paths) if options.aggressive => attach_socket(
+            socket_paths
+                .into_iter()
+                .next()
+                .expect("multiple session match is non-empty"),
+            escape,
+            bindings,
+            false,
+        ),
+        ActiveSessionMatch::Multiple(_) => {
             if let Some(session) = options.session {
                 Err(format!(
                     "multiple active screen-rs sessions match {}; specify the full socket name",
@@ -3055,7 +3064,7 @@ fn resolve_session_socket(
                 "no active screen-rs session found matching {}",
                 session.to_string_lossy()
             )),
-            ActiveSessionMatch::Multiple => Err(format!(
+            ActiveSessionMatch::Multiple(_) => Err(format!(
                 "multiple active screen-rs sessions match {}; specify the full socket name",
                 session.to_string_lossy()
             )),
@@ -3065,7 +3074,7 @@ fn resolve_session_socket(
     match find_active_session_socket(runtime, None)? {
         ActiveSessionMatch::One(socket_path) => Ok(socket_path),
         ActiveSessionMatch::None => Err("no active screen-rs sessions found".to_owned()),
-        ActiveSessionMatch::Multiple => {
+        ActiveSessionMatch::Multiple(_) => {
             Err("multiple active screen-rs sessions found; specify -r <name>".to_owned())
         }
     }
@@ -3075,7 +3084,7 @@ fn resolve_session_socket(
 enum ActiveSessionMatch {
     None,
     One(PathBuf),
-    Multiple,
+    Multiple(Vec<PathBuf>),
 }
 
 fn find_active_session_socket(
@@ -3089,18 +3098,21 @@ fn find_active_session_socket(
         }
         if requested.is_none_or(|requested| session_name_matches(entry.name.as_os_str(), requested))
         {
-            matches.push(
+            matches.push((
                 runtime
                     .session_socket_path(entry.name.as_os_str())
                     .map_err(|error| error.to_string())?,
-            );
+                entry.created_at,
+            ));
         }
     }
 
+    matches.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+
     Ok(match matches.len() {
         0 => ActiveSessionMatch::None,
-        1 => ActiveSessionMatch::One(matches.remove(0)),
-        _ => ActiveSessionMatch::Multiple,
+        1 => ActiveSessionMatch::One(matches.remove(0).0),
+        _ => ActiveSessionMatch::Multiple(matches.into_iter().map(|(path, _)| path).collect()),
     })
 }
 
