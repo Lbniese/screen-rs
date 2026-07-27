@@ -4,6 +4,7 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::ffi::OsStringExt;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -53,6 +54,7 @@ pub fn run_until_shutdown(config: DaemonConfig) -> Result<DaemonReport, DaemonEr
         path: config.socket_path.clone(),
         source,
     })?;
+    restrict_socket_permissions(&config.socket_path)?;
     let _cleanup = SocketCleanup::new(config.socket_path.clone());
     let mut clients_served = 0;
 
@@ -552,6 +554,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
         path: config.socket_path.clone(),
         source,
     })?;
+    restrict_socket_permissions(&config.socket_path)?;
     listener
         .set_nonblocking(true)
         .map_err(DaemonError::Accept)?;
@@ -4723,6 +4726,14 @@ fn ensure_parent_exists(path: &Path) -> Result<(), DaemonError> {
     };
     fs::create_dir_all(parent).map_err(|source| DaemonError::Io {
         path: parent.to_owned(),
+        source,
+    })
+}
+
+/// Set the socket file mode to owner read/write only.
+fn restrict_socket_permissions(path: &Path) -> Result<(), DaemonError> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|source| DaemonError::Io {
+        path: path.to_owned(),
         source,
     })
 }

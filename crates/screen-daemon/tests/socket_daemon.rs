@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -52,6 +53,15 @@ fn daemon_accepts_hello_and_shutdown() {
     let daemon_path = socket_path.clone();
     let handle = thread::spawn(move || run_until_shutdown(DaemonConfig::new(daemon_path)));
     wait_for_path(&socket_path);
+    let mode = fs::metadata(&socket_path)
+        .expect("stat daemon socket")
+        .permissions()
+        .mode();
+    assert_eq!(
+        mode & 0o777,
+        0o600,
+        "socket mode should be 0600, got {mode:o}"
+    );
 
     let mut client = UnixStream::connect(&socket_path).expect("connect daemon");
     Message::Hello.write_to(&mut client).expect("write hello");
