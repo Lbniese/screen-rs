@@ -1534,18 +1534,18 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                                 client.selected = idx;
                                 session.selected = idx;
                             }
-                            send_to_client(
+                            let _ = send_to_client(
                                 &mut clients,
                                 id,
                                 &Message::WindowCreated {
                                     id: win.window_id.0,
                                     number: win.number,
                                 },
-                            )?;
+                            );
                         }
                         Err(e) => {
                             let err = format!("window creation failed: {e}").into_bytes();
-                            send_to_client(&mut clients, id, &Message::Error(err))?;
+                            let _ = send_to_client(&mut clients, id, &Message::Error(err));
                         }
                     }
                 }
@@ -1708,7 +1708,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                     let path =
                         exchange_path.unwrap_or_else(|| PathBuf::from("/tmp/screen-exchange"));
                     if let Ok(data) = fs::read(&path) {
-                        send_to_client(&mut clients, id, &Message::PasteRequest(data))?;
+                        let _ = send_to_client(&mut clients, id, &Message::PasteRequest(data));
                     }
                 }
                 ClientEvent::WriteBuf(id, data) => {
@@ -1772,7 +1772,11 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                             window.alive,
                             window.terminal.scrollback_len()
                         );
-                        send_to_client(&mut clients, id, &Message::WindowInfo(info.into_bytes()))?;
+                        let _ = send_to_client(
+                            &mut clients,
+                            id,
+                            &Message::WindowInfo(info.into_bytes()),
+                        );
                     }
                 }
                 ClientEvent::SearchHistory(id, query) => {
@@ -1788,7 +1792,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                                 matches.push(i as u32);
                             }
                         }
-                        send_to_client(&mut clients, id, &Message::SearchResult(matches))?;
+                        let _ = send_to_client(&mut clients, id, &Message::SearchResult(matches));
                     }
                 }
                 ClientEvent::Command(cmd) => {
@@ -1888,7 +1892,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         if session.regions.len() == 1 {
                             session.selected = session.regions[0].window_idx;
                             session.regions.clear();
-                            send_to_client(
+                            let _ = send_to_client(
                                 &mut clients,
                                 id,
                                 &Message::WindowSelected {
@@ -1898,7 +1902,7 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                                         .map(|w| w.number)
                                         .unwrap_or(0),
                                 },
-                            )?;
+                            );
                         }
                         broadcast_region_layout(&session, &mut clients)?;
                     }
@@ -1924,11 +1928,11 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         let new = session.regions[session.focused_region].window_idx;
                         session.selected = new;
                         if let Some(win) = session.windows.get(new) {
-                            send_to_client(
+                            let _ = send_to_client(
                                 &mut clients,
                                 id,
                                 &Message::WindowSelected { number: win.number },
-                            )?;
+                            );
                         }
                         broadcast_region_layout(&session, &mut clients)?;
                     }
@@ -1943,11 +1947,11 @@ pub fn run_pty_session(config: PtySessionConfig) -> Result<(), DaemonError> {
                         let new = session.regions[session.focused_region].window_idx;
                         session.selected = new;
                         if let Some(win) = session.windows.get(new) {
-                            send_to_client(
+                            let _ = send_to_client(
                                 &mut clients,
                                 id,
                                 &Message::WindowSelected { number: win.number },
-                            )?;
+                            );
                         }
                         broadcast_region_layout(&session, &mut clients)?;
                     }
@@ -3277,10 +3281,18 @@ fn send_window_list_to_client(
         })
         .collect();
 
-    for client in clients.iter_mut() {
-        if client.id == client_id {
-            Message::WindowList(list.clone()).write_to(&mut client.stream)?;
+    let mut i = 0;
+    while i < clients.len() {
+        if clients[i].id == client_id {
+            if Message::WindowList(list.clone())
+                .write_to(&mut clients[i].stream)
+                .is_err()
+            {
+                clients.remove(i);
+            }
+            break;
         }
+        i += 1;
     }
     Ok(())
 }
@@ -3521,10 +3533,15 @@ fn send_to_client(
     client_id: u64,
     message: &Message,
 ) -> Result<(), DaemonError> {
-    for client in clients.iter_mut() {
-        if client.id == client_id {
-            message.write_to(&mut client.stream)?;
+    let mut i = 0;
+    while i < clients.len() {
+        if clients[i].id == client_id {
+            if message.write_to(&mut clients[i].stream).is_err() {
+                clients.remove(i);
+            }
+            break;
         }
+        i += 1;
     }
     Ok(())
 }
@@ -5880,5 +5897,24 @@ mod tests {
 
         let sty = sty_value(&path);
         assert_eq!(sty.as_bytes(), name.as_slice());
+    }
+
+    #[test]
+    fn send_to_client_removes_client_when_write_fails() {
+        let (stream, peer) = UnixStream::pair().expect("create socket pair");
+        drop(peer);
+        let mut clients = vec![AttachedClient {
+            id: 7,
+            stream,
+            selected: 0,
+            last_selected: 0,
+            mouse_buf: Vec::new(),
+            display_cols: 80,
+            display_rows: 24,
+        }];
+
+        let _ = send_to_client(&mut clients, 7, &Message::Hello);
+
+        assert!(clients.is_empty());
     }
 }
