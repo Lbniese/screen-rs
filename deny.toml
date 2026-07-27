@@ -1,5 +1,7 @@
 [advisories]
 version = 2
+# cargo-deny 0.20+ treats vulnerability and unsound advisories as errors;
+# the removed vulnerability key is therefore enforced by the default policy.
 yanked = "deny"
 
 [licenses]
