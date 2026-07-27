@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime};
 mod encoding;
 mod error;
 mod peer_cred;
+mod signal;
 mod socket_util;
 mod termcap;
 
@@ -18,6 +19,7 @@ pub use error::DaemonError;
 use screen_protocol::{Message, WindowInfoMsg};
 use screen_pty::{PtyCommand, PtyProcess, PtySize};
 use screen_terminal::{Dimensions, Style, TerminalState};
+use signal::DaemonSignal;
 use socket_util::{
     SocketCleanup, ensure_parent_exists, open_log_file, reject_existing_socket_path,
     restrict_socket_permissions, sty_value,
@@ -4652,62 +4654,6 @@ fn set_socket_timeout(result: io::Result<()>) -> Result<(), DaemonError> {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::InvalidInput => Ok(()),
         Err(error) => Err(DaemonError::ConfigureClient(error)),
-    }
-}
-
-enum DaemonSignal {
-    DetachClients,
-    Shutdown,
-}
-
-#[cfg(unix)]
-#[allow(unsafe_code)]
-mod signal {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    static SIGHUP: AtomicBool = AtomicBool::new(false);
-    static SHUTDOWN: AtomicBool = AtomicBool::new(false);
-
-    extern "C" fn handle_sighup(_: libc::c_int) {
-        SIGHUP.store(true, Ordering::SeqCst);
-    }
-    extern "C" fn handle_shutdown(_: libc::c_int) {
-        SHUTDOWN.store(true, Ordering::SeqCst);
-    }
-
-    pub fn install() {
-        unsafe {
-            libc::signal(
-                libc::SIGHUP,
-                handle_sighup as *const () as libc::sighandler_t,
-            );
-            libc::signal(
-                libc::SIGTERM,
-                handle_shutdown as *const () as libc::sighandler_t,
-            );
-            libc::signal(
-                libc::SIGINT,
-                handle_shutdown as *const () as libc::sighandler_t,
-            );
-        }
-    }
-
-    pub fn poll() -> Option<super::DaemonSignal> {
-        if SHUTDOWN.swap(false, Ordering::SeqCst) {
-            Some(super::DaemonSignal::Shutdown)
-        } else if SIGHUP.swap(false, Ordering::SeqCst) {
-            Some(super::DaemonSignal::DetachClients)
-        } else {
-            None
-        }
-    }
-}
-
-#[cfg(not(unix))]
-mod signal {
-    pub fn install() {}
-    pub fn poll() -> Option<super::DaemonSignal> {
-        None
     }
 }
 
