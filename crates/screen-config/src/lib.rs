@@ -2028,7 +2028,21 @@ fn home_dir() -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 
 fn source_path(source: &[u8], base_directory: Option<&Path>) -> PathBuf {
-    let path = PathBuf::from(OsString::from_vec(source.to_vec()));
+    let source = String::from_utf8_lossy(source);
+    let expanded = if let Some(rest) = source.strip_prefix("~/") {
+        home_dir()
+            .map(|home| home.join(rest).to_string_lossy().into_owned())
+            .unwrap_or_else(|| source.into_owned())
+    } else if let Some(rest) = source.strip_prefix('$') {
+        let variable_end = rest.find('/').unwrap_or(rest.len());
+        let variable = &rest[..variable_end];
+        std::env::var(variable)
+            .map(|value| format!("{value}{}", &rest[variable_end..]))
+            .unwrap_or_else(|_| source.into_owned())
+    } else {
+        source.into_owned()
+    };
+    let path = PathBuf::from(OsString::from_vec(expanded.into_bytes()));
     if path.is_absolute() {
         path
     } else if let Some(base_directory) = base_directory {
@@ -2259,6 +2273,15 @@ mod tests {
         assert_eq!(config.chdir, Some(b"/tmp/before".to_vec()));
         assert_eq!(config.logging, Some(true));
         assert_eq!(config.logfile, Some(b"/tmp/source.log".to_vec()));
+    }
+
+    #[test]
+    fn source_supports_home_and_environment_expansion() {
+        let home = home_dir().expect("HOME is set for this test");
+        assert_eq!(source_path(b"~/nested.rc", None), home.join("nested.rc"));
+
+        let path = source_path(b"$HOME/nested.rc", None);
+        assert_eq!(path, home.join("nested.rc"));
     }
 
     #[test]

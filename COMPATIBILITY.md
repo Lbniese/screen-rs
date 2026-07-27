@@ -48,7 +48,7 @@ run and uploads it as the `compatibility-manifest-summary` workflow artifact.
   existing `$HOME/.screenrc`.
 - `-c file`/startup config parsing is implemented for a minimal tested startup
   subset: `shell <path>`, `term <name>`, `chdir <path>`, absolute or
-  config-relative `source <file>`, `log on/off`, `deflog on/off`, and
+  config-relative, home-relative, and environment-expanded `source <file>`, `log on/off`, `deflog on/off`, and
   `logfile <path>`. Full `.screenrc` compatibility is not claimed.
 - `-L` is implemented for the tested one-window detached case, writing raw PTY
   output to the default `screenlog.0` file in the launcher working directory.

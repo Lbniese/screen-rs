@@ -1197,7 +1197,7 @@ surface = "config_or_colon_command"
 name = "acladd"
 status = "implemented"
 unit_tests = ["crates/screen-config/src/lib.rs"]
-notes = "Parser support has unit coverage; runtime semantics are covered only where separately listed."
+notes = "Recursive config-relative, home-relative, and environment-expanded source paths have unit coverage."
 
 [[features]]
 id = "config_command.aclchg"
@@ -2875,4 +2875,3 @@ surface = "platform"
 name = "utmp/utmpx login accounting"
 status = "missing"
 notes = "Platform accounting is documented as future work and not implemented to parity."
-
