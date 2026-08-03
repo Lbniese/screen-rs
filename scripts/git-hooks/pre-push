@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Pre-push hook for screen-rs.
+#
+# Runs the project verification suite (fmt, clippy, tests) so a broken commit
+# never reaches the remote. Install with `scripts/install-git-hooks.sh`.
+#
+# Bypass on a one-off push with:  SCREEN_RS_SKIP_HOOK=1 git push
+
+set -euo pipefail
+
+if [[ "${SCREEN_RS_SKIP_HOOK:-0}" == "1" ]]; then
+  echo "screen-rs: pre-push hook skipped (SCREEN_RS_SKIP_HOOK=1)"
+  exit 0
+fi
+
+# `git push` feeds pre-push the list of refs being updated on stdin
+# ("<local-ref> <local-sha> <remote-ref> <remote-sha>" per line). We don't
+# need it, but we consume it so the pipe does not stall.
+cat >/dev/null
+
+# Run from the repository root regardless of where the push was invoked.
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+echo "screen-rs: running pre-push verification (fmt, clippy, test)..."
+echo "          (set SCREEN_RS_SKIP_HOOK=1 to bypass on a one-off push)"
+
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+
+if command -v cargo-deny >/dev/null 2>&1; then
+  cargo deny check
+else
+  echo "screen-rs: cargo-deny not installed locally; skipping cargo deny check"
+fi
+
+echo "screen-rs: pre-push checks passed"
