@@ -40,24 +40,36 @@ fn spawn_echo_and_read_output() {
 
 #[test]
 fn spawn_with_env_and_current_dir() {
-    let Some(env) = command_path("env", "/usr/bin/env") else {
+    let Some(sh) = command_path("sh", "/bin/sh") else {
         return;
     };
-    let expected_dir = std::env::temp_dir();
-    let mut command = PtyCommand::new(env, SIZE);
+    let requested_dir = std::env::temp_dir();
+    // Canonicalize so platform quirks (macOS `/var` -> `/private/var` symlinks,
+    // or a TMPDIR trailing slash) do not make the working-directory check flaky.
+    let canonical = requested_dir
+        .canonicalize()
+        .unwrap_or_else(|_| requested_dir.clone());
+    let canonical_bytes = canonical.to_string_lossy().into_owned();
+    // Print the physical CWD first, then the env var, so a single `read_until`
+    // captures both and proves `current_dir` and `env` both took effect.
+    let mut command = PtyCommand::new(sh, SIZE);
     command
+        .args(["-c", "pwd -P; echo \"SCREEN_PTY_TEST=$SCREEN_PTY_TEST\""])
         .env("SCREEN_PTY_TEST", "present")
-        .current_dir(&expected_dir);
-    let mut pty = command.spawn().expect("spawn env");
+        .current_dir(&requested_dir);
+    let mut pty = command.spawn().expect("spawn sh");
     let output = pty
         .read_until(b"SCREEN_PTY_TEST=present", TIMEOUT)
-        .expect("environment output within timeout");
+        .expect("env marker within timeout");
     assert!(
         output
-            .windows(expected_dir.to_string_lossy().len())
-            .any(|window| { window == expected_dir.to_string_lossy().as_bytes() })
+            .windows(canonical_bytes.len())
+            .any(|window| window == canonical_bytes.as_bytes()),
+        "current_dir {:?} not reflected by `pwd -P`; output was {:?}",
+        requested_dir,
+        String::from_utf8_lossy(&output),
     );
-    assert!(pty.wait_or_kill(TIMEOUT).expect("env exits").success());
+    assert!(pty.wait_or_kill(TIMEOUT).expect("sh exits").success());
 }
 
 #[test]
