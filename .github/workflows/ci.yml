@@ -5,20 +5,54 @@ on:
     branches: ["main"]
   pull_request:
 
+# Each verification gate runs as an independent job so a failure in one
+# check never masks another. Previously these were sequential steps in a
+# single job, which let a broken test ship because an earlier Clippy abort
+# skipped the Test step entirely.
 jobs:
-  test:
+  fmt:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      - name: Install GNU Screen
-        run: sudo apt-get update && sudo apt-get install -y screen
+          components: rustfmt
       - name: Format
         run: cargo fmt --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install GNU Screen
+        run: sudo apt-get update && sudo apt-get install -y screen
+      - name: Test
+        run: cargo test --workspace
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Validate compatibility manifest
         run: |
           scripts/validate-compatibility-manifest.py
@@ -29,10 +63,6 @@ jobs:
           name: compatibility-manifest-summary
           path: /tmp/manifest-summary.md
           if-no-files-found: error
-      - name: Test
-        run: cargo test --workspace
-      - name: Cargo deny
-        uses: EmbarkStudios/cargo-deny-action@v2
 
   reference-matrix:
     runs-on: ubuntu-latest
