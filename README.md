@@ -55,3 +55,10 @@ an environment that permits those operations for full coverage.
 
 Compatibility claims must be backed by tests and recorded in
 `COMPATIBILITY.md`.
+
+## License
+
+`screen-rs` is licensed under the GNU General Public License, version 3 or
+later ([GPL-3.0-or-later]). See [`LICENSE`](LICENSE) and [`COPYING`](COPYING).
+
+[GPL-3.0-or-later]: https://www.gnu.org/licenses/gpl-3.0.html
